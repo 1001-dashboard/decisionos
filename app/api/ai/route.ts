@@ -5,6 +5,7 @@ import { sbServer } from "@/lib/supabase/server";
 // Prompt compatti, chiavi JSON brevi, max_tokens bassi: costi contenuti.
 
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-haiku-5-5";
+const GEMINI = process.env.GEMINI_MODEL || "gemini-flash-latest";
 const CAP = Number(process.env.AI_DAILY_CALLS || 60);
 
 const BASE = "Sei l'analista critico di Decision OS. Italiano, conciso, concreto. Mai confermare per compiacere. Non inventare fatti: se manca un dato dillo. Rispondi SOLO con JSON valido, nessun testo fuori.";
@@ -30,8 +31,8 @@ Se presente pr (priorità utente 1-5) usala per i pesi. Regole: 3-5 criteri, pes
 };
 
 export async function POST(req: NextRequest) {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) return NextResponse.json({ e: "ANTHROPIC_API_KEY non configurata su Vercel." }, { status: 500 });
+  const gkey = process.env.GEMINI_API_KEY, key = process.env.ANTHROPIC_API_KEY;
+  if (!gkey && !key) return NextResponse.json({ e: "Nessuna chiave AI configurata su Vercel (GEMINI_API_KEY o ANTHROPIC_API_KEY)." }, { status: 500 });
   const s = await sbServer();
   const { data: { user } } = await s.auth.getUser();
   if (!user) return NextResponse.json({ e: "Non autenticato" }, { status: 401 });
@@ -46,22 +47,40 @@ export async function POST(req: NextRequest) {
   const { data: use } = await s.from("ai_usage").select("calls,tokens").eq("user_id", user.id).eq("day", day).maybeSingle();
   if ((use?.calls ?? 0) >= CAP) return NextResponse.json({ e: `Limite giornaliero di ${CAP} analisi raggiunto.` }, { status: 429 });
 
-  const r = await fetch(`${process.env.AI_BASE_URL || "https://api.anthropic.com"}/v1/messages`, {
-    method: "POST",
-    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({
-      model: MODEL, max_tokens: p.max,
-      system: [{ type: "text", text: `${BASE}\n${p.s}`, cache_control: { type: "ephemeral" } }],
-      messages: [{ role: "user", content: body }],
-    }),
-  });
-  const j = await r.json();
-  if (!r.ok) return NextResponse.json({ e: j?.error?.message || "Errore AI" }, { status: 502 });
-
-  const tok = (j.usage?.input_tokens ?? 0) + (j.usage?.output_tokens ?? 0);
+  const sys = `${BASE}\n${p.s}`;
+  let txt = "", tok = 0;
+  if (gkey) {
+    // Gemini: piano gratuito con limiti di frequenza
+    const r = await fetch(`${process.env.AI_BASE_URL || "https://generativelanguage.googleapis.com"}/v1beta/models/${GEMINI}:generateContent`, {
+      method: "POST",
+      headers: { "x-goog-api-key": gkey, "content-type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: sys }] },
+        contents: [{ role: "user", parts: [{ text: body }] }],
+        generationConfig: { maxOutputTokens: p.max * 4, responseMimeType: "application/json", temperature: 0.4 },
+      }),
+    });
+    const j = await r.json();
+    if (!r.ok) return NextResponse.json({ e: r.status === 429 ? "Limite gratuito Gemini raggiunto, riprova tra poco." : j?.error?.message || "Errore AI" }, { status: 502 });
+    txt = (j.candidates?.[0]?.content?.parts ?? []).map((c: { text?: string; thought?: boolean }) => (c.thought ? "" : c.text ?? "")).join("");
+    tok = j.usageMetadata?.totalTokenCount ?? 0;
+  } else {
+    const r = await fetch(`${process.env.AI_BASE_URL || "https://api.anthropic.com"}/v1/messages`, {
+      method: "POST",
+      headers: { "x-api-key": key!, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: MODEL, max_tokens: p.max,
+        system: [{ type: "text", text: sys, cache_control: { type: "ephemeral" } }],
+        messages: [{ role: "user", content: body }],
+      }),
+    });
+    const j = await r.json();
+    if (!r.ok) return NextResponse.json({ e: j?.error?.message || "Errore AI" }, { status: 502 });
+    txt = (j.content ?? []).map((c: { text?: string }) => c.text ?? "").join("");
+    tok = (j.usage?.input_tokens ?? 0) + (j.usage?.output_tokens ?? 0);
+  }
   await s.from("ai_usage").upsert({ user_id: user.id, day, calls: (use?.calls ?? 0) + 1, tokens: (use?.tokens ?? 0) + tok });
 
-  const txt: string = (j.content ?? []).map((c: { text?: string }) => c.text ?? "").join("");
   const a = txt.indexOf("{"), b = txt.lastIndexOf("}");
   try {
     return NextResponse.json({ data: JSON.parse(txt.slice(a, b + 1)), tok });
