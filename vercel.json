@@ -1,7 +1,0 @@
-{
-  "rewrites": [
-    { "source": "/decisionos", "destination": "https://decisionos-roan.vercel.app/decisionos" },
-    { "source": "/decisionos/:path*", "destination": "https://decisionos-roan.vercel.app/decisionos/:path*" },
-    { "source": "/((?!decisionos).*)", "destination": "/index.html" }
-  ]
-}
