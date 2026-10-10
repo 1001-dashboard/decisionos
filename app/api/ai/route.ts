@@ -1,4 +1,7 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse, type NextRequest } from "next/server";
+
+export const maxDuration = 30;
 import { sbServer } from "@/lib/supabase/server";
 
 // Analista AI. Il modello interpreta e critica; i numeri li calcola il motore lato client.
@@ -51,17 +54,29 @@ export async function POST(req: NextRequest) {
   let txt = "", tok = 0;
   if (gkey) {
     // Gemini: piano gratuito con limiti di frequenza
-    const r = await fetch(`${process.env.AI_BASE_URL || "https://generativelanguage.googleapis.com"}/v1beta/models/${GEMINI}:generateContent`, {
-      method: "POST",
-      headers: { "x-goog-api-key": gkey, "content-type": "application/json" },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: sys }] },
-        contents: [{ role: "user", parts: [{ text: body }] }],
-        generationConfig: { maxOutputTokens: p.max * 4, responseMimeType: "application/json", temperature: 0.4 },
-      }),
-    });
-    const j = await r.json();
-    if (!r.ok) return NextResponse.json({ e: r.status === 429 ? "Limite gratuito Gemini raggiunto, riprova tra poco." : j?.error?.message || "Errore AI" }, { status: 502 });
+    // fallback: se il modello è sovraccarico (503/429) riprova e poi passa al modello lite
+    const models = [...new Set([GEMINI, "gemini-flash-lite-latest", "gemini-2.5-flash-lite"])];
+    let j: any = null, last = "";
+    outer: for (const m of models) {
+      for (let k = 0; k < 2; k++) {
+        const r = await fetch(`${process.env.AI_BASE_URL || "https://generativelanguage.googleapis.com"}/v1beta/models/${m}:generateContent`, {
+          method: "POST",
+          headers: { "x-goog-api-key": gkey, "content-type": "application/json" },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: sys }] },
+            contents: [{ role: "user", parts: [{ text: body }] }],
+            generationConfig: { maxOutputTokens: p.max * 4, responseMimeType: "application/json", temperature: 0.4 },
+          }),
+        });
+        const x = await r.json().catch(() => ({}));
+        if (r.ok) { j = x; break outer; }
+        last = x?.error?.message || `Errore ${r.status}`;
+        if (r.status === 404) break; // modello non disponibile: prova il successivo
+        if (r.status !== 503 && r.status !== 429 && r.status !== 500) return NextResponse.json({ e: last }, { status: 502 });
+        await new Promise((ok) => setTimeout(ok, 900 * (k + 1)));
+      }
+    }
+    if (!j) return NextResponse.json({ e: "Gemini sovraccarico in questo momento, riprova tra un minuto." + (last ? ` (${last.slice(0, 80)})` : "") }, { status: 503 });
     txt = (j.candidates?.[0]?.content?.parts ?? []).map((c: { text?: string; thought?: boolean }) => (c.thought ? "" : c.text ?? "")).join("");
     tok = j.usageMetadata?.totalTokenCount ?? 0;
   } else {
