@@ -40,10 +40,10 @@ export default function Nuova() {
       setDraft(d); setAns(rr.length ? [] : ans);
     } catch (err) { setE((err as Error).message); } finally { setBusy(false); }
   }
-  async function crea(model?: Model, name?: string) {
+  async function crea(model?: Model, name?: string, descr?: string) {
     setBusy(true);
     const rr = answers();
-    const id = await createDecision({ name: name ?? "Nuova decisione", descr: t + (rr.length ? `\n\n${rr.join("\n")}` : ""), model });
+    const id = await createDecision({ name: name ?? "Nuova decisione", descr: descr ?? t + (rr.length ? `\n\n${rr.join("\n")}` : ""), model });
     setBusy(false);
     if (id) r.push(`/app/decisioni/${id}`);
   }
@@ -56,7 +56,7 @@ export default function Nuova() {
     const d = structuredClone(exampleDecision);
     d.model.options.forEach((o) => { o.id = uid(); });
     setT(d.descr ?? "");
-    crea(d.model, d.name);
+    crea(d.model, d.name, d.descr);
   }
   const edit = (fn: (m: Model) => void) => { if (!draft) return; const m = structuredClone(draft.model); fn(m); setDraft({ ...draft, model: m }); };
   const w = draft ? weightsFromImp(draft.model.criteria) : [];

@@ -83,12 +83,14 @@ export const exampleDecision: Decision = {
   descr: "Proposta come Station Manager a Ibiza. Andrei prima da solo, poi con la famiglia. Gli affitti sono alti.",
   model: {
     criteria: [
-      { id: "eco", name: "Soldi che restano a fine mese", w: 0, imp: 5, kind: "num", unit: "€/mese", worst: 0, best: 1500 },
-      { id: "fam", name: "Famiglia", w: 0, imp: 5, kind: "g" },
-      { id: "car", name: "Crescita professionale", w: 0, imp: 3, kind: "g" },
-      { id: "sta", name: "Stabilità del lavoro", w: 0, imp: 3, kind: "g" },
+      { id: "eco", name: "Soldi che restano a fine mese", w: 0, imp: 5, kind: "num", unit: "€/mese", worst: 0, best: 1500, why: "con affitti alti lo stipendio lordo dice poco: conta cosa resta" },
+      { id: "fam", name: "Famiglia", w: 0, imp: 5, kind: "g", why: "partire da solo significa mesi separati da moglie e figlio" },
+      { id: "car", name: "Crescita professionale", w: 0, imp: 3, kind: "g", why: "un ruolo da Station Manager pesa sul curriculum" },
+      { id: "sta", name: "Stabilità del lavoro", w: 0, imp: 3, kind: "g", why: "un contratto stagionale cambia il rischio di tutto il piano" },
     ],
     constraints: [{ id: "k1", name: "Almeno 300 € al mese", crit: "eco", min: 300 }],
+    tipo: "lavoro",
+    nota: "Qui i soldi contano come «quanto resta dopo l'affitto», non come stipendio.",
     options: [
       { id: "E1", name: "Accetto Ibiza", s: { fam: 25, car: 100, sta: 50 }, raw: { eco: 700 },
         pro: ["Salto di ruolo", "Esperienza internazionale"], con: ["Famiglia divisa i primi mesi", "Affitto si mangia metà stipendio"],

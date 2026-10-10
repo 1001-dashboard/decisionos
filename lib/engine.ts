@@ -210,7 +210,7 @@ export function applyCombo(
   }
   if ("cash0" in r && "cash_m" in r) {
     r.cash_end = r.cash0 + r.cash_m * horizon;
-    r.autonomia_mesi = r.cash_m >= 0 ? Infinity : r1(r.cash0 / -r.cash_m);
+    r.autonomia_mesi = r.cash_m >= 0 ? Infinity : Math.max(0, r1(r.cash0 / -r.cash_m));   // mesi prima di finire i risparmi, mai negativo
   }
   const viol: string[] = [];
   for (const ru of rules) {
@@ -416,10 +416,22 @@ export function hashOf(x: unknown) {
 }
 
 /* ---------- Controllo onestà: segnali che stai scegliendo con la pancia ---------- */
+const MONEY = /soldi|stipend|reddit|guadagn|margine|economic|risparm|€/i;
 export type Bias = { k: string; t: string };
 
 export function biasChecks(dec: Decision, r: DecResult): Bias[] {
   const out: Bias[] = [];
+  // 0. due o più criteri che misurano i soldi: lo stesso beneficio conta più volte
+  // stessa unità in € (es. due criteri in €/mese) oppure un giudizio "economico" accanto a una cifra in €.
+  // Spesa iniziale (€) e costo mensile (€/mese) sono cose diverse: non vengono segnalati.
+  const euro = dec.model.criteria.filter((c) => c.kind === "num" && /€/.test(c.unit ?? ""));
+  const byUnit = new Map<string, Crit[]>();
+  for (const c of euro) byUnit.set((c.unit ?? "").replace(/\s/g, ""), [...(byUnit.get((c.unit ?? "").replace(/\s/g, "")) ?? []), c]);
+  const sameUnit = [...byUnit.values()].find((g) => g.length > 1);
+  const gMoney = dec.model.criteria.filter((c) => c.kind !== "num" && MONEY.test(c.name));
+  const money = sameUnit ?? (gMoney.length && euro.length ? [...gMoney, euro[0]] : gMoney.length > 1 ? gMoney : []);
+  if (money.length > 1)
+    out.push({ k: "doppio", t: `${money.map((c) => `«${c.name}»`).join(" e ")} misurano entrambi i soldi: lo stesso vantaggio viene contato più volte. Tienine uno solo, o abbassa l'importanza degli altri.` });
   const m = normalize(dec.model);
   const ok = r.rows.filter((x) => !x.excluded.length);
   const A = ok[0];

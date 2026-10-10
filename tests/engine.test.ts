@@ -215,3 +215,23 @@ console.log("engine: 10/10 ok");
   assert.deepEqual(bad.questions, []); assert.equal(bad.model.criteria.length, 0); assert.equal(bad.model.tipo, undefined);
   console.log("engine: risposte AI malformate ok");
 }
+
+// 19. autonomia mai negativa, doppio conteggio dei soldi
+{
+  const E = await import("../lib/engine.ts");
+  const st = E.applyCombo([], new Map(), [], { cash0: -5000, cash_m: -1500 }, [], 24, 1);
+  assert.equal(st.res.autonomia_mesi, 0);
+  const d: Decision = { id: "D", name: "D", status: "aperta", imp: 1, model: { constraints: [],
+    criteria: [{ id: "a", name: "Impatto economico netto", w: 0, imp: 4, kind: "num", unit: "€/mese", worst: 0, best: 2000 },
+               { id: "b", name: "Soldi che restano a fine mese", w: 0, imp: 4, kind: "num", unit: "€/mese", worst: 0, best: 1000 },
+               { id: "c", name: "Famiglia", w: 0, imp: 4, kind: "g" }],
+    options: [{ id: "x", name: "Vado", s: { c: 50 }, raw: { a: 2000, b: 500 } }, { id: "y", name: "Resto", s: { c: 100 }, raw: { a: 1200, b: 0 } }] } };
+  assert.ok(E.biasChecks(d, E.analyzeDecision(d)).some((b) => b.k === "doppio"));
+  // spesa iniziale + costo mensile: non è doppio conteggio
+  const d2: Decision = JSON.parse(JSON.stringify(d)); d2.model.criteria[0].unit = "€"; d2.model.criteria[0].name = "Soldi da anticipare";
+  assert.ok(!E.biasChecks(d2, E.analyzeDecision(d2)).some((b) => b.k === "doppio"));
+  // giudizio "sicurezza economica" accanto a una cifra in €: doppio
+  const d3: Decision = JSON.parse(JSON.stringify(d2)); d3.model.criteria[2] = { id: "c", name: "Sicurezza economica", w: 0, imp: 4, kind: "g" };
+  assert.ok(E.biasChecks(d3, E.analyzeDecision(d3)).some((b) => b.k === "doppio"));
+  console.log("engine: autonomia e doppio conteggio ok");
+}

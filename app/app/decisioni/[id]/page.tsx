@@ -3,18 +3,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  Plus, Trash2, Snowflake, CheckCircle2, Bot, Printer, Check, AlertCircle, ArrowRight, ArrowLeft,
-  ArrowLeftRight, Lightbulb, StickyNote, Wallet, ChevronDown, TrendingUp, TrendingDown, ShieldAlert, Link2, Scale, Swords, RefreshCw, ThumbsUp, ThumbsDown, X, Brain,
+  Plus, Trash2, Snowflake, CheckCircle2, Bot, Check, AlertCircle, ArrowRight, ArrowLeft,
+  ArrowLeftRight, Lightbulb, StickyNote, Wallet, ChevronDown, TrendingUp, TrendingDown, ShieldAlert, Link2, Scale, Swords, RefreshCw, ThumbsUp, ThumbsDown, X, Brain, FileText,
 } from "lucide-react";
 import { useWs } from "@/components/Workspace";
 import { ScoreBars } from "@/components/charts";
-import ReportView from "@/components/ReportView";
 import {
   analyzeDecision, applyCombo, combos, eur, fmt, normalize, turningPoints, uid, weightsFromImp, scaleNum, levelOf,
   tradeoff, solidity, crossEffects, hashOf, biasChecks,
   LEVELS, type Crit, type Decision, type Impact, type Model, type Opt, type Rel,
 } from "@/lib/engine";
-import { buildReport } from "@/lib/report";
 import { CRIT_LIB } from "@/lib/templates";
 import { impFor, priGap } from "@/lib/priorities";
 import { ai, compact } from "@/lib/ai";
@@ -93,11 +91,6 @@ export default function DecisionPage() {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiErr, setAiErr] = useState("");
   const others = useMemo(() => ws.decisions.filter((x) => x.status === "aperta" && x.id !== id && x.model.options.length), [ws.decisions, id]);
-  const rep = useMemo(() => {
-    if (!d || !res) return [];
-    const c = combos([d], [res], ws.deps, ws.profile.resources, ws.profile.rules, ws.profile.horizon);
-    return buildReport([d], [res], c, ws.profile.rules, ws.profile.horizon);
-  }, [d, res, ws.deps, ws.profile]);
 
   if (!d || !res || !st || !nm) return <div className="empty">Decisione non trovata. <Link href="/app/decisioni">Torna all&apos;elenco</Link></div>;
   const m = d.model;
@@ -211,6 +204,7 @@ export default function DecisionPage() {
           </div>
         </div>
         <div className="row noprint">
+          <Link className="btn sm" href={`/app/decisioni/${d.id}/report`}><FileText size={15} /> Report</Link>
           <button className="btn sm" onClick={freeze} title="Salva una fotografia di questa analisi nel Registro"><Snowflake size={15} /> Congela</button>
           <Link className="btn sm" href={`/app/registro?d=${d.id}`}><CheckCircle2 size={15} /> Ho deciso</Link>
           <button className="iconbtn" title="Elimina" onClick={del}><Trash2 size={17} /></button>
@@ -613,11 +607,11 @@ export default function DecisionPage() {
             ))}
             {others.length > 0 && <small>I conflitti di tempo e soldi sono rilevati in automatico dai tuoi limiti di sicurezza. Gli altri legami (es. «se mi trasferisco, il progetto si ferma») li aggiungi in <Link href="/app/connessioni">Connessioni</Link>.</small>}
           </div>
-          <details className="card">
-            <summary>Report completo</summary>
-            <div style={{ marginTop: 14 }}><ReportView sections={rep} /></div>
-            <button className="btn sm noprint" style={{ marginTop: 12 }} onClick={() => window.print()}><Printer size={15} /> Stampa / salva PDF</button>
-          </details>
+          <Link href={`/app/decisioni/${d.id}/report`} className="card row repcta" style={{ textDecoration: "none", color: "inherit", flexWrap: "nowrap", gap: 14 }}>
+            <span className="iconwrap n"><FileText size={20} /></span>
+            <span style={{ flex: 1 }}><b>Report completo</b><br /><small>Premessa, alternative con pro, contro e conseguenze, scenari, effetti, piano d&apos;azione. Pronto da salvare in PDF.</small></span>
+            <ArrowRight size={18} />
+          </Link>
           <details className="card">
             <summary>Come è stato calcolato</summary>
             <div className="tablewrap" style={{ marginTop: 10 }}>
