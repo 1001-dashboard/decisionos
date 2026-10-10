@@ -1,4 +1,4 @@
-import { type Combo, type DecResult, type Decision, type Resources, type Rule, eur, fmt, cashBreakpoint } from "./engine.ts";
+import { type Combo, type DecResult, type Decision, type Rule, eur, fmt, cashBreakpoint, normalize } from "./engine.ts";
 
 export type Section = { k: string; title: string; lines: string[]; tone?: "ok" | "warn" | "bad" };
 
@@ -18,6 +18,7 @@ export function buildReport(decs: Decision[], res: DecResult[], cmb: Combo[], ru
     const second = r.rows.filter((x) => !x.excluded.length)[1];
     const strong = t.detail.filter((d) => d.contrib != null).sort((a, b) => (b.contrib ?? 0) - (a.contrib ?? 0)).slice(0, 2).map((d) => d.name.toLowerCase());
     l1.push(`${r.name}: prevale **${t.name}** (${fmt(t.score)})${second ? `, ${fmt(r.margin ?? 0)} punti su ${second.name}` : ""}. Spinta soprattutto da ${strong.join(" e ")}.`);
+    if (t.pending.length) l1.push(`Condizione ancora da verificare per ${t.name}: ${t.pending.join("; ")}.`);
   });
   if (best && decs.length > 1) l1.push(`Piano combinato con punteggio più alto: **${best.names.join(" + ")}** (${fmt(best.score)}).`);
   S.push({ k: "pref", title: "Alternativa preferibile secondo i criteri attuali", lines: l1 });
@@ -59,9 +60,10 @@ export function buildReport(decs: Decision[], res: DecResult[], cmb: Combo[], ru
   decs.forEach((d, i) => {
     const t = top[i];
     if (!t) return;
-    const o = d.model.options.find((x) => x.id === t.id)!;
+    const nm = normalize(d.model);
+    const o = nm.options.find((x) => x.id === t.id)!;
     const cnt: Record<string, number> = { F: 0, D: 0, S: 0, "?": 0 };
-    d.model.criteria.forEach((c) => { cnt[o.s?.[c.id] == null ? "?" : o.m?.[c.id]?.rel ?? "D"]++; });
+    nm.criteria.forEach((c) => { cnt[o.s?.[c.id] == null ? "?" : o.m?.[c.id]?.rel ?? "D"]++; });
     l4.push(`${d.name} / ${t.name}: ${Object.entries(cnt).filter(([, n]) => n).map(([k, n]) => `${n} ${REL[k]}`).join(", ")}.`);
     if (cnt.S + cnt["?"] > cnt.F + cnt.D) t4 = "warn";
     const weak = (d.model.assumptions ?? []).filter((a) => a.rel === "?" || a.aff === "bassa");

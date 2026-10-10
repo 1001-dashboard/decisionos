@@ -4,7 +4,7 @@ import { fmt } from "@/lib/engine";
 export const PAL = ["#15406a", "#13879a", "#e49b2f", "#7fa8c9", "#5fbccb", "#c27a1a", "#33597d", "#a9cbe3"];
 
 /** Barre impilate: ogni segmento = contributo di un criterio (peso × valore). */
-export function ScoreBars({ rows }: { rows: Row[] }) {
+export function ScoreBars({ rows, reasons = true }: { rows: Row[]; reasons?: boolean }) {
   const crit = rows[0]?.detail ?? [];
   return (
     <div className="stack">
@@ -33,7 +33,7 @@ export function ScoreBars({ rows }: { rows: Row[] }) {
               ) : null,
             )}
           </div>
-          {r.excluded.length ? <div className="err" style={{ marginTop: 4 }}>{r.excluded.join(" · ")}</div> : null}
+          {reasons && r.excluded.length ? <div className="err" style={{ marginTop: 4 }}>{r.excluded.join(" · ")}</div> : null}
         </div>
       ))}
     </div>
@@ -105,9 +105,9 @@ export function Legend({ items }: { items: { name: string; color: string }[] }) 
 /** Illustrazione: le decisioni sono collegate da risorse condivise. */
 export function NetworkArt() {
   const nodes = [
-    { x: 300, y: 205, r: 46, c: "#0d2c4a", t: "Decisione", sub: "Ibiza?" },
+    { x: 300, y: 205, r: 46, c: "#0d2c4a", t: "Decisione", sub: "A o B?" },
     { x: 110, y: 90, r: 34, c: "#13879a", t: "Lavoro" },
-    { x: 490, y: 92, r: 34, c: "#15406a", t: "FleetUnit" },
+    { x: 490, y: 92, r: 34, c: "#15406a", t: "Progetti" },
     { x: 92, y: 300, r: 32, c: "#7fa8c9", t: "Casa" },
     { x: 505, y: 305, r: 32, c: "#e49b2f", t: "Famiglia" },
     { x: 300, y: 50, r: 26, c: "#5fbccb", t: "Tempo" },
@@ -146,7 +146,7 @@ export function NetworkArt() {
         <rect width="132" height="40" rx="10" fill="#fff" stroke="#e1e8ef" />
         <circle cx="18" cy="20" r="6" fill="#23906a" />
         <text x="32" y="17" fontSize="11" fill="#5b6d7e">Costo condiviso</text>
-        <text x="32" y="31" fontSize="12" fontWeight="600" fill="#0d2c4a">trasloco × 1 volta</text>
+        <text x="32" y="31" fontSize="12" fontWeight="600" fill="#0d2c4a">contato 1 volta</text>
       </g>
     </svg>
   );

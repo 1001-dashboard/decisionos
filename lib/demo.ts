@@ -76,3 +76,61 @@ export const demoDeps: Dep[] = [
   { id: "d1", if: "A1", excl: "B2", why: "Full-time incompatibile con il trasferimento", confirmed: true },
   { id: "d2", if: "A2", excl: "B2", why: "Full-time + lavoro dipendente: ore insufficienti", confirmed: true },
 ];
+
+/** Esempio nel nuovo formato (valori reali e giudizi), usato da «Esempio» in Nuova decisione. */
+export const exampleDecision: Decision = {
+  id: "EX", name: "Lavoro a Ibiza (esempio)", status: "aperta", imp: 2,
+  descr: "Proposta come Station Manager a Ibiza. Andrei prima da solo, poi con la famiglia. Gli affitti sono alti.",
+  model: {
+    criteria: [
+      { id: "eco", name: "Soldi che restano a fine mese", w: 0, imp: 5, kind: "num", unit: "€/mese", worst: 0, best: 1500 },
+      { id: "fam", name: "Famiglia", w: 0, imp: 5, kind: "g" },
+      { id: "car", name: "Crescita professionale", w: 0, imp: 3, kind: "g" },
+      { id: "sta", name: "Stabilità del lavoro", w: 0, imp: 3, kind: "g" },
+    ],
+    constraints: [{ id: "k1", name: "Almeno 300 € al mese", crit: "eco", min: 300 }],
+    options: [
+      { id: "E1", name: "Accetto Ibiza", s: { fam: 25, car: 100, sta: 50 }, raw: { eco: 700 },
+        pro: ["Salto di ruolo", "Esperienza internazionale"], con: ["Famiglia divisa i primi mesi", "Affitto si mangia metà stipendio"],
+        m: { eco: { why: "netto stimato meno affitto ~1.450 €", rel: "S" }, car: { rel: "D", why: "ruolo di responsabilità" } },
+        impacts: [{ r: "cash0", v: -5000, tag: "trasloco" }, { r: "cash_m", v: [300, 700, 1000] }, { r: "hours_w", v: -45 }] },
+      { id: "E2", name: "Ibiza con alloggio incluso", note: "Da negoziare: alloggio aziendale piccolo, contratto stagionale", s: { fam: 25, car: 75, sta: 25 }, raw: { eco: 1500 },
+        pro: ["Quasi tutto lo stipendio resta"], con: ["Alloggio piccolo: famiglia dopo", "Contratto legato alla stagione", "Ruolo meno ampio"],
+        m: { eco: { why: "se l'azienda copre l'affitto", rel: "S" }, sta: { why: "contratto legato all'alloggio, stagionale", rel: "D" }, fam: { why: "alloggio piccolo: famiglia dopo", rel: "S" } },
+        impacts: [{ r: "cash0", v: -2000 }, { r: "cash_m", v: [900, 1300, 1500] }, { r: "hours_w", v: -45 }] },
+      { id: "E3", name: "Resto a Roma e cerco qui", s: { fam: 100, car: 25, sta: 25 }, raw: { eco: 300 },
+        pro: ["Famiglia unita", "Nessun trasloco"], con: ["Nessuna offerta concreta oggi"],
+        m: { eco: { why: "dipende da quando trovo", rel: "S" } },
+        impacts: [{ r: "cash_m", v: [-600, 0, 500] }, { r: "hours_w", v: -40 }] },
+    ],
+    assumptions: [
+      { id: "x1", t: "Stipendio netto reale in Spagna", rel: "?" },
+      { id: "x2", t: "L'azienda può offrire alloggio o contributo affitto?", rel: "?" },
+      { id: "x3", t: "Costo asilo a Ibiza", rel: "?" },
+    ],
+  },
+};
+
+/** Demo della presentazione: stesso formato dell'app (valori reali, giudizi, importanza 1-5). */
+export const demoProject: Decision = {
+  id: "PJ", name: "Progetto personale", status: "aperta", imp: 1,
+  model: {
+    criteria: [
+      { id: "pot", name: "Potenziale", w: 0, imp: 4, kind: "g" },
+      { id: "ore", name: "Tempo richiesto", w: 0, imp: 3, kind: "num", unit: "ore/settimana", worst: 30, best: 5 },
+      { id: "inv", name: "Investimento", w: 0, imp: 3, kind: "num", unit: "€", worst: 10000, best: 0 },
+    ],
+    constraints: [],
+    options: [
+      { id: "P1", name: "Full-time", s: { pot: 100 }, raw: { ore: 30, inv: 8000 }, impacts: [{ r: "cash0", v: -8000 }, { r: "cash_m", v: [-400, -200, 0] }, { r: "hours_w", v: -30 }] },
+      { id: "P2", name: "Part-time", s: { pot: 50 }, raw: { ore: 10, inv: 3000 }, impacts: [{ r: "cash0", v: -3000 }, { r: "hours_w", v: -10 }] },
+      { id: "P3", name: "In pausa", s: { pot: 0 }, raw: { ore: 0, inv: 0 } },
+    ],
+  },
+};
+export const landingResources: Resources = { cash0: 12000, cash_m: -200, hours_w: 55 };
+export const landingRules: Rule[] = [
+  { id: "l1", name: "Risparmi mai sotto", r: "cash_end", min: 3000 },
+  { id: "l2", name: "Autonomia minima", r: "autonomia_mesi", min: 6 },
+  { id: "l3", name: "Ore libere", r: "hours_w", min: 0 },
+];

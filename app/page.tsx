@@ -6,36 +6,40 @@ import {
 import { NetworkArt } from "@/components/charts";
 import LandingDemo from "@/components/LandingDemo";
 import { BP } from "@/lib/bp";
+import { TEMPLATES } from "@/lib/templates";
+import { Briefcase, Home, Car, Rocket, Package, Users, GraduationCap, PiggyBank } from "lucide-react";
+
+const TI: Record<string, React.ReactNode> = { briefcase: <Briefcase size={22} />, home: <Home size={22} />, car: <Car size={22} />, rocket: <Rocket size={22} />, package: <Package size={22} />, users: <Users size={22} />, graduation: <GraduationCap size={22} />, piggy: <PiggyBank size={22} /> };
 
 const DOMANDE = [
   ["Quali alternative ho realmente?", "Anche quelle che non stai considerando: lo status quo, una via di mezzo, un rinvio con scadenza.", <Split key="1" size={20} />],
   ["Cosa guadagno, cosa perdo, cosa rischio?", "Criteri pesati secondo le tue priorità di oggi, con vincoli che nessun punteggio può aggirare.", <Scale key="2" size={20} />],
-  ["Su quali fatti sto ragionando?", "Ogni dato è marcato: verificato, dichiarato, stimato o mancante. Con fonte e data.", <FileSearch key="3" size={20} />],
+  ["Su quali fatti sto ragionando?", "Per ogni valore indichi se è certo, se te l'hanno detto o se è una stima. Il sistema ti dice quanto del risultato poggia sulle stime.", <FileSearch key="3" size={20} />],
   ["Come cambia il resto della mia vita?", "Soldi, tempo, casa e progetti sono risorse condivise: una scelta le sposta per tutte le altre.", <Network key="4" size={20} />],
   ["Cosa mi farebbe cambiare idea?", "Le soglie precise che ribaltano la scelta: lo stipendio minimo, l'affitto massimo, una garanzia.", <Target key="5" size={20} />],
 ] as const;
 
 const AMBIENTI = [
   ["Panoramica", "La tua situazione", "Decisioni aperte, vincoli, scadenze, risorse.", <LayoutDashboard key="a" size={22} />],
-  ["Decisioni", "Confronta le opzioni", "Alternative, criteri, pesi, dati e ipotesi.", <GitFork key="b" size={22} />],
+  ["Decisioni", "Confronta le opzioni", "Una procedura guidata in 5 passi, con valori reali o giudizi.", <GitFork key="b" size={22} />],
   ["Connessioni", "Effetti tra le scelte", "Conflitti, requisiti e costi condivisi.", <Link2 key="c" size={22} />],
   ["Scenari", "Simula il futuro", "Da 3 mesi a 5 anni: favorevole, centrale, sfavorevole.", <TrendingUp key="d" size={22} />],
-  ["Analista AI", "Analisi critica", "Struttura, contraddittorio, punto di svolta.", <Bot key="e" size={22} />],
+  ["Analista AI", "Analisi critica", "Dal racconto al quadro: domande, pro e contro, criteri spiegati. Poi il parere contrario.", <Bot key="e" size={22} />],
   ["Registro", "Risultati nel tempo", "Analisi congelate, scelte prese, verifiche.", <History key="f" size={22} />],
 ] as const;
 
 const STEPS = [
-  ["Racconti", "Descrivi la situazione con parole tue, come la diresti a un amico."],
-  ["Struttura", "L'AI propone alternative, obiettivi, limiti e chiede solo i dati indispensabili."],
-  ["Calcolo", "Pesi, vincoli, sensibilità e scenari: matematica deterministica, ripetibile."],
-  ["Conseguenze", "Impatto su soldi, tempo e sulle altre decisioni aperte."],
-  ["Report", "Conclusione motivata, condizioni da verificare, prossimo passo."],
+  ["Alternative", "Le strade reali, compreso lasciare tutto com'è. Parti da un modello o racconta la situazione all'Analista."],
+  ["Cosa conta", "Gli aspetti che ti interessano, quanto contano da 1 a 5 e i limiti che non accetti di superare."],
+  ["Valuta", "Valori reali (€, ore, km) o giudizi da Pessimo a Ottimo, con la fonte di ogni dato."],
+  ["Soldi e tempo", "Spese iniziali e differenze mensili: quanti mesi reggi e cosa succede se va male."],
+  ["Risultato", "Verdetto in chiaro, cosa guadagni e a cosa rinunci, solidità delle stime, effetti sulle altre scelte."],
 ];
 
 const REGOLE = [
   ["Vincoli non negoziabili", "Un'opzione che viola una condizione obbligatoria non diventa consigliabile per un punteggio alto.", <Ban key="1" size={20} />],
-  ["Criteri non duplicati", "Reddito, risparmio e sicurezza economica spesso misurano la stessa cosa. Il sistema lo segnala.", <Copy key="2" size={20} />],
-  ["Sensibilità sempre visibile", "Se basta spostare di poco un peso per cambiare classifica, lo vedi subito.", <Activity key="3" size={20} />],
+  ["Stime messe alla prova", "Il motore peggiora del 20% le tue stime e verifica se la prima scelta regge ancora.", <Activity key="2" size={20} />],
+  ["Soglie di svolta", "Ti dice la cifra esatta oltre la quale cambieresti idea: lo stipendio minimo, il costo massimo.", <Calculator key="3" size={20} />],
   ["Tutto ricostruibile", "Ogni punteggio si apre: valore, peso, contributo, motivazione. Nessun numero inventato dall'AI.", <Microscope key="4" size={20} />],
 ] as const;
 
@@ -90,7 +94,7 @@ export default function Landing() {
             ))}
           </div>
           <div style={{ marginTop: 40 }}>
-            <h3>Dal racconto al piano d&apos;azione</h3>
+            <h3>Ogni decisione in 5 passi</h3>
             <div className="steps" style={{ marginTop: 12 }}>
               {STEPS.map(([t, d]) => <div key={t} className="card"><h3 style={{ marginBottom: 4 }}>{t}</h3><p className="muted" style={{ margin: 0, fontSize: 14 }}>{d}</p></div>)}
             </div>
@@ -98,24 +102,38 @@ export default function Landing() {
         </div>
       </section>
 
-      <section className="sec alt" id="demo">
+      <section className="sec alt">
+        <div className="wrap">
+          <div className="head"><h2>Per ogni tipo di scelta</h2><p>Vita privata o lavoro: parti da un modello già impostato oppure racconta la situazione e l&apos;Analista prepara la scheda.</p></div>
+          <div className="grid g4">
+            {TEMPLATES.map((t) => (
+              <div key={t.k} className="card row" style={{ flexWrap: "nowrap", gap: 12, padding: 14 }}>
+                <span className="iconwrap t">{TI[t.icon]}</span>
+                <div><h3 style={{ margin: 0, fontSize: "1rem" }}>{t.t}</h3><small>{t.d}</small></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="sec" id="demo">
         <div className="wrap">
           <div className="head">
-            <h2>Demo: lavorare a Ibiza o restare in Italia?</h2>
-            <p>Tre alternative di lavoro, una seconda decisione collegata (un progetto imprenditoriale), risorse condivise e vincoli. Cambia i pesi e guarda cosa succede.</p>
+            <h2>Prova la demo: un&apos;offerta di lavoro all&apos;estero</h2>
+            <p>È il passo «Risultato» della piattaforma, con dati dimostrativi: tre alternative di lavoro e un progetto personale che compete per tempo e soldi. Cambia l&apos;importanza dei criteri e guarda verdetto, soglie ed effetti ricalcolarsi. Lo stesso metodo vale per una casa, un fornitore, un investimento.</p>
           </div>
           <LandingDemo />
         </div>
       </section>
 
-      <section className="sec" id="metodo">
+      <section className="sec alt" id="metodo">
         <div className="wrap">
           <div className="grid g2" style={{ alignItems: "center" }}>
             <div>
               <h2>Un punteggio onesto</h2>
-              <p className="muted">Valutazione multicriterio ponderata, l&apos;approccio usato nelle analisi di opzioni pubbliche e organizzative. Ogni alternativa riceve un valore da 0 a 100 per criterio, su scale dichiarate.</p>
+              <p className="muted">Valutazione multicriterio ponderata, l&apos;approccio usato nelle analisi di opzioni pubbliche e organizzative. Inserisci valori reali o giudizi: il motore li porta su una scala comune, da ciò che per te è pessimo a ciò che è ottimo.</p>
               <div className="formula">S(A) = Σ w<sub>i</sub> · s<sub>i</sub>(A) / 100</div>
-              <p className="muted" style={{ marginTop: 12, fontSize: 14 }}>w<sub>i</sub> è il peso del criterio, s<sub>i</sub>(A) il valore dell&apos;alternativa. Il risultato misura quanto un&apos;opzione aderisce alle tue preferenze, <strong>non la probabilità che sia giusta</strong>. Per questo non vedrai mai un «92% di sicurezza».</p>
+              <p className="muted" style={{ marginTop: 12, fontSize: 14 }}>w<sub>i</sub> è il peso del criterio (deriva dall&apos;importanza 1-5 che gli dai), s<sub>i</sub>(A) il valore dell&apos;alternativa sulla tua scala. Il risultato misura quanto un&apos;opzione aderisce alle tue preferenze, <strong>non la probabilità che sia giusta</strong>. Per questo non vedrai mai un «92% di sicurezza».</p>
             </div>
             <div className="grid" style={{ gap: 12 }}>
               {REGOLE.map(([t, d, ic]) => (
@@ -134,10 +152,10 @@ export default function Landing() {
           <div className="head"><h2>Un analista che non ti dà ragione</h2><p>L&apos;AI interpreta e critica. I numeri li calcola il motore, separato dal modello linguistico.</p></div>
           <div className="grid g4">
             {[
-              ["Analisi dei dati", "Separa fatti, dichiarazioni, stime e dati mancanti. Trova contraddizioni.", <ListChecks key="1" />],
+              ["Prepara il quadro", "Riconosce il tipo di scelta, ti fa le domande che servono, propone pro, contro e criteri spiegati.", <ListChecks key="1" />],
               ["Contraddittorio", "Il miglior argomento contro l'opzione che preferisci.", <ShieldAlert key="2" />],
               ["Punto di svolta", "Le soglie concrete che ribaltano la scelta.", <Calculator key="3" />],
-              ["Retrospettiva", "Errore di ragionamento, dato sbagliato o evento imprevedibile?", <History key="4" />],
+              ["Testa o pancia?", "Ti avvisa quando il risultato sembra costruito per confermare quello che volevi già.", <History key="4" />],
             ].map(([t, d, ic]) => (
               <div key={t as string} style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 16, padding: 18 }}>
                 <span className="iconwrap" style={{ background: "rgba(228,155,47,.16)", color: "#f0b65c" }}>{ic}</span>
@@ -146,7 +164,7 @@ export default function Landing() {
             ))}
           </div>
           <blockquote style={{ margin: "30px 0 0", padding: "18px 22px", borderLeft: "3px solid var(--orange)", background: "rgba(255,255,255,.05)", borderRadius: "0 14px 14px 0", fontSize: 16, color: "#e4eef6" }}>
-            «Secondo i criteri attuali Ibiza offre più prospettive professionali, ma la sostenibilità economica non è verificata. Prima di impegnarti accerta il costo annuo dell&apos;alloggio e la durata del contratto. La preferenza cade se il margine mensile scende sotto la soglia che hai fissato.»
+            «Secondo i tuoi criteri l&apos;alternativa A offre più prospettive, ma la sostenibilità economica non è verificata. Prima di impegnarti accerta il costo reale e le condizioni del contratto. La preferenza per A cade se ciò che ti resta a fine mese scende sotto 600 €.»
           </blockquote>
         </div>
       </section>
@@ -173,7 +191,7 @@ export default function Landing() {
 
       <footer className="lf">
         <div className="wrap row between">
-          <span className="row" style={{ gap: 10 }}><img src={`${BP}/brand/icon-512.png`} alt="" width={30} height={30} style={{ borderRadius: 8 }} /> Decision OS · V1</span>
+          <span className="row" style={{ gap: 10 }}><img src={`${BP}/brand/icon-512.png`} alt="" width={30} height={30} style={{ borderRadius: 8 }} /> Decision OS</span>
           <span>Un progetto di <a href="https://danilorusciano.it">Danilo Rusciano</a></span>
         </div>
       </footer>

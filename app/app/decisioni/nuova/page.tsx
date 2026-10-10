@@ -1,86 +1,164 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, FilePlus, Wand2, HelpCircle } from "lucide-react";
+import {
+  Sparkles, FilePlus, Wand2, HelpCircle, Briefcase, Home, Car, Rocket, Package, Users, GraduationCap, PiggyBank,
+  ThumbsUp, ThumbsDown, Info, RefreshCw, X,
+} from "lucide-react";
+import { TEMPLATES, fromTemplate, type Template } from "@/lib/templates";
+import { impFor } from "@/lib/priorities";
 import { useWs } from "@/components/Workspace";
 import { Top } from "@/components/Shell";
 import { ai, structToModel, type AiStruct } from "@/lib/ai";
-import { demoDecisions } from "@/lib/demo";
-import { uid, type Model } from "@/lib/engine";
+import { exampleDecision } from "@/lib/demo";
+import { uid, weightsFromImp, type Model } from "@/lib/engine";
 
-const REL = { F: ["ok", "verificato"], D: ["info", "dichiarato"], S: ["warn", "stima"], "?": ["bad", "mancante"] } as const;
+const TI: Record<string, React.ReactNode> = { briefcase: <Briefcase size={20} />, home: <Home size={20} />, car: <Car size={20} />, rocket: <Rocket size={20} />, package: <Package size={20} />, users: <Users size={20} />, graduation: <GraduationCap size={20} />, piggy: <PiggyBank size={20} /> };
+const REL = { F: ["ok", "verificato"], D: ["info", "dichiarato"], S: ["warn", "stima"], "?": ["bad", "da chiarire"] } as const;
+const TIPO: Record<string, string> = { lavoro: "Lavoro", casa: "Casa", acquisto: "Acquisto", soldi: "Soldi", progetto: "Progetto", relazioni: "Relazioni", famiglia: "Famiglia", salute: "Salute", studio: "Studio", morale: "Scelta morale", altro: "Altro" };
+
+type Draft = { name: string; model: Model; questions: string[]; serve: boolean };
 
 export default function Nuova() {
   const r = useRouter();
   const { createDecision, profile } = useWs();
   const [t, setT] = useState("");
-  const [ans, setAns] = useState("");
+  const [ans, setAns] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [e, setE] = useState("");
-  const [draft, setDraft] = useState<{ name: string; model: Model; questions: string[] } | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const answers = () => (draft?.questions ?? []).map((q, i) => (ans[i]?.trim() ? `${q} ${ans[i].trim()}` : "")).filter(Boolean);
 
   async function struttura() {
     setBusy(true); setE("");
     try {
       const ctx = profile.ai_share.contesto ? Object.entries(profile.context).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("; ") : undefined;
-      const x = await ai<AiStruct>("struttura", { t: t + (ans ? `\nRisposte: ${ans}` : ""), ...(ctx ? { ctx } : {}), ...(profile.ai_share.contesto ? { pr: profile.priorities } : {}) });
-      setDraft(structToModel(x));
+      const rr = answers();
+      const x = await ai<AiStruct>("struttura", { t, pr: profile.priorities, ...(rr.length ? { r: rr } : {}), ...(ctx ? { ctx } : {}) });
+      const d = structToModel(x);
+      if (!d.model.options.length && !d.model.criteria.length) { setE("L'Analista non ha prodotto un quadro utilizzabile: riprova, magari aggiungendo qualche dettaglio."); return; }
+      setDraft(d); setAns(rr.length ? [] : ans);
     } catch (err) { setE((err as Error).message); } finally { setBusy(false); }
   }
   async function crea(model?: Model, name?: string) {
     setBusy(true);
-    const id = await createDecision({ name: name ?? "Nuova decisione", descr: t + (ans ? `\n\n${ans}` : ""), model });
+    const rr = answers();
+    const id = await createDecision({ name: name ?? "Nuova decisione", descr: t + (rr.length ? `\n\n${rr.join("\n")}` : ""), model });
     setBusy(false);
     if (id) r.push(`/app/decisioni/${id}`);
   }
-  function demo() {
-    const d = structuredClone(demoDecisions[0]);
-    const map: Record<string, string> = {};
-    d.model.options.forEach((o) => { map[o.id] = uid(); o.id = map[o.id]; });
-    setT(d.descr ?? "");
-    crea(d.model, d.name + " (esempio)");
+  function fromTpl(tp: Template) {
+    const x = fromTemplate(tp);
+    x.model.criteria.forEach((c) => { c.imp = impFor(c.name, profile.priorities, c.imp); });   // priorità generali come punto di partenza
+    crea(x.model, x.name);
   }
+  function demo() {
+    const d = structuredClone(exampleDecision);
+    d.model.options.forEach((o) => { o.id = uid(); });
+    setT(d.descr ?? "");
+    crea(d.model, d.name);
+  }
+  const edit = (fn: (m: Model) => void) => { if (!draft) return; const m = structuredClone(draft.model); fn(m); setDraft({ ...draft, model: m }); };
+  const w = draft ? weightsFromImp(draft.model.criteria) : [];
 
   return (
     <>
-      <Top t="Nuova decisione" s="Racconta la situazione con parole tue" />
+      <Top t="Nuova decisione" s="Racconta la situazione e l'Analista prepara il quadro, oppure parti da un modello." />
       <div className="grid g2" style={{ alignItems: "start" }}>
         <div className="card stack">
-          <label className="f" htmlFor="tx">Descrizione libera</label>
+          <h3 style={{ margin: 0 }}>Racconta la scelta</h3>
+          <label className="f" htmlFor="tx">Come la diresti a un amico: cosa devi scegliere, cosa ti preoccupa, cosa conta per te</label>
           <textarea id="tx" style={{ minHeight: 170 }} value={t} onChange={(x) => setT(x.target.value)}
-            placeholder="Es. Mi hanno proposto un lavoro all'estero. Potrebbe essere un'opportunità, ma dovrei affrontare un trasferimento costoso e cambiare molte cose…" />
-          {draft?.questions.length ? (
-            <div className="stack">
-              <div className="note"><strong className="row" style={{ gap: 6 }}><HelpCircle size={16} /> Dati indispensabili</strong>
-                <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>{draft.questions.map((q) => <li key={q}>{q}</li>)}</ul></div>
-              <textarea placeholder="Le tue risposte (facoltative)" value={ans} onChange={(x) => setAns(x.target.value)} />
-            </div>
-          ) : null}
+            placeholder="Es. Mi hanno offerto un lavoro in un'altra città: guadagnerei di più ma starei lontano dalla famiglia. Oppure: devo dire a un amico una cosa scomoda e non so se farlo…" />
           <div className="row">
-            <button className="btn pri" disabled={busy || t.trim().length < 20} onClick={struttura}><Sparkles size={16} /> {draft ? "Rigenera scheda" : "Struttura con l'Analista"}</button>
+            <button className="btn pri" disabled={busy || t.trim().length < 20} onClick={struttura}><Sparkles size={16} /> {draft ? "Rifai il quadro" : "Prepara il quadro con l'Analista"}</button>
             <button className="btn" disabled={busy} onClick={() => crea()}><FilePlus size={16} /> Crea vuota</button>
-            <button className="btn ghost" disabled={busy} onClick={demo}><Wand2 size={16} /> Esempio Ibiza</button>
+            <button className="btn ghost" disabled={busy} onClick={demo}><Wand2 size={16} /> Vedi un esempio compilato</button>
           </div>
-          {busy && <small>Elaborazione…</small>}
+          {busy && <small>L&apos;Analista sta preparando il quadro…</small>}
           {e && <div className="err">{e}</div>}
-          <small>All&apos;AI viene inviato solo il testo{profile.ai_share.contesto ? " e il tuo contesto/priorità" : ""}. Cambia in Impostazioni.</small>
+          <small>L&apos;Analista non ti dice cosa scegliere: ti propone cosa guardare. All&apos;AI vanno il testo e le tue priorità generali{profile.ai_share.contesto ? ", più il tuo contesto" : ""}.</small>
         </div>
 
         <div className="card stack">
-          <h3>Scheda strutturata</h3>
-          {!draft ? <div className="empty">L&apos;Analista proporrà alternative, criteri, vincoli e dati. Prima di calcolare, controlli tu.</div> : (
+          <h3 style={{ margin: 0 }}>Il quadro</h3>
+          {!draft ? (
+            <div className="empty">
+              Qui l&apos;Analista ti mostra: il tipo di scelta, le alternative con pro e contro, gli aspetti da valutare con il perché, una prima bozza di quanto contano. Se gli manca qualcosa, ti fa due o tre domande.
+            </div>
+          ) : (
             <>
-              <div><label className="f">Titolo</label><input value={draft.name} onChange={(x) => setDraft({ ...draft, name: x.target.value })} /></div>
-              <div><label className="f">Alternative</label><div className="row" style={{ gap: 6 }}>{draft.model.options.map((o) => <span key={o.id} className="pill teal">{o.name}</span>)}</div></div>
-              <div><label className="f">Criteri e pesi</label>
-                {draft.model.criteria.map((c) => <div key={c.id} className="row between" style={{ fontSize: 14 }}><span>{c.name}{c.group ? <small> · gruppo {c.group}</small> : null}</span><strong>{c.w}%</strong></div>)}</div>
-              {draft.model.constraints.length ? <div><label className="f">Vincoli non negoziabili</label>{draft.model.constraints.map((k) => <div key={k.id} style={{ fontSize: 14 }}>• {k.name}</div>)}</div> : null}
-              <div><label className="f">Su cosa si basa</label>
-                {draft.model.assumptions!.map((a) => <div key={a.id} className="row between" style={{ fontSize: 14, flexWrap: "nowrap" }}><span>{a.t}</span><span className={`pill ${REL[a.rel][0]}`}>{REL[a.rel][1]}</span></div>)}</div>
-              <div className="note warn" style={{ fontSize: 13 }}>I valori stimati dall&apos;AI sono marcati come «stima»: rivedili nel modello prima di fidarti del confronto.</div>
+              <div className="row">
+                <input value={draft.name} onChange={(x) => setDraft({ ...draft, name: x.target.value })} style={{ fontWeight: 600, flex: 1 }} aria-label="Titolo" />
+                {draft.model.tipo && <span className="pill teal">{TIPO[draft.model.tipo] ?? draft.model.tipo}</span>}
+              </div>
+              {draft.model.nota && <div className="note"><Info size={14} /> {draft.model.nota}</div>}
+
+              {draft.questions.length > 0 && (
+                <div className={`stack qbox ${draft.serve ? "must" : ""}`}>
+                  <strong className="row" style={{ gap: 6 }}><HelpCircle size={16} /> {draft.serve ? "Prima di continuare, mi servono queste risposte" : "Per un quadro più preciso"}</strong>
+                  {draft.questions.map((q, i) => (
+                    <div key={q}><label className="f">{q}</label><input value={ans[i] ?? ""} onChange={(x) => { const a = [...ans]; a[i] = x.target.value; setAns(a); }} /></div>
+                  ))}
+                  <button className="btn sm" disabled={busy || !ans.some((a) => a?.trim())} onClick={struttura}><RefreshCw size={14} /> Aggiorna il quadro con le risposte</button>
+                </div>
+              )}
+
+              <div>
+                <label className="f">Le strade possibili, con pro e contro</label>
+                <div className="stack" style={{ gap: 8 }}>
+                  {draft.model.options.map((o) => (
+                    <div key={o.id} className="altbox">
+                      <div className="row between" style={{ flexWrap: "nowrap" }}>
+                        <input value={o.name} onChange={(x) => edit((m) => { m.options.find((y) => y.id === o.id)!.name = x.target.value; })} style={{ fontWeight: 600 }} />
+                        <button className="iconbtn" title="Togli" onClick={() => edit((m) => { m.options = m.options.filter((y) => y.id !== o.id); })}><X size={15} /></button>
+                      </div>
+                      <div className="pc">
+                        <ul className="pro">{(o.pro ?? []).map((p) => <li key={p}><ThumbsUp size={13} /> {p}</li>)}</ul>
+                        <ul className="con">{(o.con ?? []).map((p) => <li key={p}><ThumbsDown size={13} /> {p}</li>)}</ul>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <small>Pro e contro sono spunti dal tuo racconto e dal buon senso: verificali, non sono fatti.</small>
+              </div>
+
+              <div>
+                <label className="f">Cosa valutare e quanto conta (bozza dalle tue priorità)</label>
+                {draft.model.criteria.map((c, i) => (
+                  <div key={c.id} className="critrow">
+                    <div style={{ minWidth: 0 }}>
+                      <b>{c.name}</b> <small>{c.kind === "num" ? `· cifra in ${c.unit}` : "· giudizio"} · {w[i]}%</small>
+                      {c.why && <div className="muted" style={{ fontSize: 13 }}>{c.why}</div>}
+                    </div>
+                    <div className="dots sm">
+                      {[1, 2, 3, 4, 5].map((n) => <button key={n} className={(c.imp ?? 3) >= n ? "on" : ""} aria-label={`${c.name} importanza ${n}`} onClick={() => edit((m) => { m.criteria[i].imp = n; })}>{n}</button>)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {draft.model.constraints.length ? <div><label className="f">Limiti che hai indicato</label>{draft.model.constraints.map((k) => <div key={k.id} style={{ fontSize: 14 }}>• {k.name}</div>)}</div> : null}
+              {draft.model.assumptions!.length ? (
+                <div><label className="f">Da verificare</label>
+                  {draft.model.assumptions!.map((a) => <div key={a.id} className="row between" style={{ fontSize: 14, flexWrap: "nowrap" }}><span>{a.t}</span><span className={`pill ${REL[a.rel][0]}`}>{REL[a.rel][1]}</span></div>)}</div>
+              ) : null}
               <button className="btn pri" disabled={busy} onClick={() => crea(draft.model, draft.name)}>Conferma e apri il modello</button>
+              <small style={{ display: "block" }}>Dopo potrai cambiare tutto: alternative, criteri, importanze. I valori proposti dall&apos;AI sono marcati come «stima».</small>
             </>
           )}
+        </div>
+      </div>
+
+      <div className="card stack" style={{ marginTop: 16 }}>
+        <h3 style={{ margin: 0 }}>Oppure parti da un modello</h3>
+        <small>Alternative e criteri tipici già pronti, con l&apos;importanza presa dalle tue priorità. Senza valori: li metti tu.</small>
+        <div className="tplgrid">
+          {TEMPLATES.map((tp) => (
+            <button key={tp.k} className="tpl" disabled={busy} onClick={() => fromTpl(tp)}>
+              <span className="iconwrap t">{TI[tp.icon]}</span>
+              <span><b>{tp.t}</b><small>{tp.d}</small></span>
+            </button>
+          ))}
         </div>
       </div>
     </>

@@ -1,5 +1,5 @@
 import { BP } from "./bp.ts";
-import { uid, type Decision, type DecResult, type Model, type Rel, type Resources } from "./engine.ts";
+import { uid, LEVELS, levelOf, type Decision, type DecResult, type Model, type Rel, type Resources } from "./engine.ts";
 
 export async function ai<T = unknown>(mode: string, payload: unknown): Promise<T> {
   const r = await fetch(`${BP}/api/ai`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode, payload }) });
@@ -13,11 +13,13 @@ export function compact(d: Decision, r: DecResult | undefined, opts: { eco: bool
   const m = d.model;
   return {
     n: d.name, t: d.descr || undefined,
-    c: m.criteria.map((c) => [c.name, c.w]),
+    c: m.criteria.map((c) => [c.name, c.imp ? `imp ${c.imp}/5` : c.w, ...(c.kind === "num" ? [`${c.worst}→${c.best} ${c.unit ?? ""}`.trim()] : [])]),
     v: m.constraints.map((k) => `${m.criteria.find((c) => c.id === k.crit)?.name} ${k.min != null ? "≥" + k.min : ""}${k.max != null ? "≤" + k.max : ""}`),
     o: m.options.map((o) => ({
       id: o.id, n: o.name,
-      s: Object.fromEntries(m.criteria.map((c) => [c.name, o.s[c.id] ?? null])),
+      s: Object.fromEntries(m.criteria.map((c) => [c.name,
+        c.kind === "num" ? (o.raw?.[c.id] == null ? null : `${o.raw[c.id]} ${c.unit ?? ""}`.trim())
+        : o.s[c.id] == null ? null : c.kind === "g" ? LEVELS[levelOf(o.s[c.id])] : o.s[c.id]])),
       y: Object.fromEntries(Object.entries(o.m ?? {}).filter(([, x]) => x.why).map(([k, x]) => [m.criteria.find((c) => c.id === k)?.name ?? k, `${x.why} [${x.rel ?? "D"}]`])),
       ...(opts.eco ? { im: (o.impacts ?? []).map((i) => [i.r, i.v]) } : {}),
     })),
@@ -32,8 +34,10 @@ export function compact(d: Decision, r: DecResult | undefined, opts: { eco: bool
 }
 
 export type AiStruct = {
-  n?: string; a?: string[];
-  c?: { n: string; w: number; g?: string; lo?: string; hi?: string }[];
+  n?: string; k?: string; x?: string; serve?: boolean;
+  a?: (string | { n: string; p?: string[]; m?: string[] })[];
+  mi?: { a: string; r: string; v: number | number[]; t?: string }[];
+  c?: { n: string; w?: number; t?: string; u?: string; p?: number; o?: number; i?: number; g?: string; y?: string }[];
   v?: { c: string; min?: number; max?: number; n?: string }[];
   s?: { a: string; c: string; v: number; y?: string }[];
   m?: { a: string; r: string; v: number | number[]; t?: string }[];
@@ -41,29 +45,48 @@ export type AiStruct = {
   q?: string[];
 };
 
-const norm = (s: string) => s.trim().toLowerCase();
+const norm = (s: string) => String(s ?? "").trim().toLowerCase();
+/** L'AI può restituire forme inattese: tutto ciò che deve essere una lista lo diventa, il resto si scarta. */
+const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
-export function structToModel(x: AiStruct): { name: string; model: Model; questions: string[] } {
-  const criteria = (x.c ?? []).slice(0, 8).map((c) => ({ id: uid(), name: c.n, w: Math.round(c.w || 0), group: c.g || undefined, lo: c.lo, hi: c.hi }));
+export function structToModel(x: AiStruct): { name: string; model: Model; questions: string[]; serve: boolean } {
+  const criteria = arr<NonNullable<AiStruct["c"]>[0]>(x.c).filter((c) => c && typeof c.n === "string").slice(0, 8).map((c) => {
+    const num = c.t === "num" && typeof c.p === "number" && typeof c.o === "number";
+    return { id: uid(), name: c.n, w: 0, imp: Math.max(1, Math.min(5, Math.round(c.i ?? 3))), group: c.g || undefined, why: c.y || undefined,
+      kind: (num ? "num" : "g") as "num" | "g", ...(num ? { unit: c.u ?? "", worst: c.p, best: c.o } : {}) };
+  });
+  const crit = (id: string) => criteria.find((c) => c.id === id)!;
   const cid = (n: string) => criteria.find((c) => norm(c.name) === norm(n))?.id;
-  const options = (x.a ?? []).slice(0, 3).map((n) => ({ id: uid(), name: n, s: {} as Record<string, number>, m: {} as NonNullable<Model["options"][0]["m"]>, impacts: [] as NonNullable<Model["options"][0]["impacts"]> }));
+  const short = (l?: string[]) => arr<string>(l).filter((t) => typeof t === "string" && t.trim()).slice(0, 4).map((t) => t.trim().slice(0, 140));
+  const options = arr<NonNullable<AiStruct["a"]>[0]>(x.a).filter((a) => typeof a === "string" || (a && typeof a.n === "string")).slice(0, 3).map((a) => {
+    const o = typeof a === "string" ? { n: a } : a;
+    return { id: uid(), name: o.n, s: {} as Record<string, number>, raw: {} as Record<string, number>, m: {} as NonNullable<Model["options"][0]["m"]>,
+      impacts: [] as NonNullable<Model["options"][0]["impacts"]>, pro: short((o as { p?: string[] }).p), con: short((o as { m?: string[] }).m) };
+  });
   const oid = (n: string) => options.find((o) => norm(o.name) === norm(n));
-  for (const s of x.s ?? []) {
+  for (const s of arr<NonNullable<AiStruct["s"]>[0]>(x.s)) {
     const o = oid(s.a), c = cid(s.c);
     if (!o || !c || typeof s.v !== "number") continue;
-    o.s[c] = Math.max(0, Math.min(100, Math.round(s.v)));
+    if (crit(c).kind === "num") o.raw[c] = s.v;
+    else o.s[c] = Math.max(0, Math.min(4, Math.round(s.v))) * 25;
     o.m[c] = { why: `Stima AI: ${s.y ?? "da verificare"}`, rel: "S" };
   }
-  for (const i of x.m ?? []) {
+  for (const i of [...arr<NonNullable<AiStruct["mi"]>[0]>(x.mi), ...arr<NonNullable<AiStruct["m"]>[0]>(x.m)]) {
     const o = oid(i.a);
     if (!o || !["cash0", "cash_m", "hours_w"].includes(i.r)) continue;
     const v = Array.isArray(i.v) && i.v.length === 3 ? (i.v.map(Number) as [number, number, number]) : Number(Array.isArray(i.v) ? i.v[0] : i.v);
     o.impacts.push({ r: i.r, v, ...(i.t ? { tag: i.t } : {}) });
   }
-  const constraints = (x.v ?? []).flatMap((k) => {
+  const constraints = arr<NonNullable<AiStruct["v"]>[0]>(x.v).flatMap((k) => {
     const c = cid(k.c);
-    return c ? [{ id: uid(), name: k.n || k.c, crit: c, min: k.min ?? null, max: k.max ?? null }] : [];
+    if (!c) return [];
+    const f = (n?: number) => (n == null ? null : crit(c).kind === "num" ? n : Math.max(0, Math.min(4, n)) * 25);
+    return [{ id: uid(), name: k.n || k.c, crit: c, min: f(k.min), max: f(k.max) }];
   });
-  const assumptions = (x.i ?? []).map((a) => ({ id: uid(), t: a.t, rel: (a.k ?? "S") as Rel, aff: a.a }));
-  return { name: x.n || "Nuova decisione", model: { criteria, constraints, options, assumptions }, questions: (x.q ?? []).slice(0, 3) };
+  const assumptions = arr<NonNullable<AiStruct["i"]>[0]>(x.i).filter((a) => a && typeof a.t === "string").map((a) => ({ id: uid(), t: a.t, rel: (a.k ?? "S") as Rel, aff: a.a }));
+  return {
+    name: typeof x.n === "string" && x.n ? x.n : "Nuova decisione",
+    model: { criteria, constraints, options, assumptions, tipo: typeof x.k === "string" ? x.k : undefined, nota: typeof x.x === "string" && x.x ? x.x : undefined },
+    questions: arr<string>(x.q).filter((q) => typeof q === "string").slice(0, 3), serve: !!x.serve,
+  };
 }

@@ -15,16 +15,19 @@ const BASE = "Sei l'analista critico di Decision OS. Italiano, conciso, concreto
 
 const P: Record<string, { s: string; max: number }> = {
   struttura: {
-    max: 1600,
-    s: `Trasforma il racconto in scheda decisionale. JSON:
-{"n":"titolo breve","a":["alternative, 2-3, includi status quo o via di mezzo se plausibile"],
-"c":[{"n":"criterio","w":peso intero,"g":"gruppo se misura soldi/tempo condivisi con altri criteri","lo":"cosa vale 0","hi":"cosa vale 100"}],
-"v":[{"c":"nome criterio","min":soglia 0-100,"n":"vincolo non negoziabile"}],
-"s":[{"a":"alternativa","c":"criterio","v":0-100,"y":"motivo breve"}],
-"m":[{"a":"alternativa","r":"cash0|cash_m|hours_w","v":[sfav,centr,fav],"t":"tag se costo una tantum condiviso"}],
-"i":[{"t":"dato o ipotesi","k":"F|D|S|?","a":"alta|media|bassa"}],
-"q":["max 3 domande indispensabili"]}
-Se presente pr (priorità utente 1-5) usala per i pesi. Regole: 3-5 criteri, pesi somma 100, niente criteri duplicati. s solo se il racconto dà basi, altrimenti ometti. m: cash0 = una tantum in € (negativo se spesa), cash_m = variazione €/mese netta, hours_w = ore/settimana consumate (negativo). k: F verificato, D dichiarato, S stima, ? mancante.`,
+    max: 2200,
+    s: `Prepara il quadro di una decisione dal racconto. NON dire mai cosa scegliere: suggerisci cosa guardare. JSON:
+{"n":"titolo breve","k":"tipo di scelta: lavoro|casa|acquisto|soldi|progetto|relazioni|famiglia|salute|studio|morale|altro",
+"x":"in 1 frase cosa conta poco in questa scelta e perché (es. per una scelta morale i soldi pesano poco), oppure vuoto",
+"serve":true se mancano informazioni senza cui il quadro è fuorviante,
+"q":["max 3 domande mirate, solo se servono"],
+"a":[{"n":"alternativa","p":["pro concreti, max 3, brevi"],"m":["contro concreti, max 3, brevi"]}],
+"c":[{"n":"criterio","y":"perché conta in questa scelta, 1 riga","t":"num se misurabile (soldi, tempo, km) altrimenti g","u":"unità se num, es. €/mese","p":valore pessimo se num,"o":valore ottimo se num,"i":importanza 1-5}],
+"v":[{"c":"nome criterio","min":soglia,"max":soglia,"n":"vincolo non negoziabile detto dall'utente"}],
+"s":[{"a":"alternativa","c":"criterio","v":valore reale se num oppure livello 0-4 se g,"y":"motivo breve"}],
+"mi":[{"a":"alternativa","r":"cash0|cash_m|hours_w","v":[sfav,centr,fav],"t":"tag se costo una tantum condiviso"}],
+"i":[{"t":"dato o ipotesi da verificare","k":"F|D|S|?","a":"alta|media|bassa"}]}
+Regole: 2-3 alternative reali, includi lasciare tutto com'è e una via di mezzo se plausibili. 3-5 criteri adatti al TIPO di scelta, niente doppioni; per scelte morali o relazionali usa giudizi su valori, effetti sulle persone, coerenza con sé, rimorso; criteri economici solo se contano davvero. Importanze: parti da pr (priorità utente 1-5, chiavi soldi, stabilita, crescita, indipendenza, benessere) e dalle risposte r; senza questi usa 3. Pro e contro: specifici del racconto più buon senso, sono spunti da verificare, mai inventare fatti. s solo se il racconto dà basi. Soglie vincoli: unità reali se num, livello 0-4 se g (0 pessimo, 4 ottimo). cash0 = una tantum € (negativo se spesa), cash_m = variazione €/mese netta, hours_w = ore/settimana consumate (negativo). k: F verificato, D dichiarato, S stima, ? mancante.`,
   },
   dati: { max: 900, s: `Analisi dei dati. Separa fatti verificati, dichiarati, stime, mancanti. Trova contraddizioni e cifre che non tornano. JSON {"p":["punto"],"c":"conclusione 1-2 frasi"}` },
   contro: { max: 900, s: `Contraddittorio. Dai il miglior argomento CONTRO l'alternativa in testa, verifica alternative ignorate, metti alla prova ipotesi e pesi. JSON {"p":["obiezione"],"c":"conclusione 1-2 frasi"}` },

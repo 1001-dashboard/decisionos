@@ -20,12 +20,24 @@ export default function Dashboard() {
   ].sort((a, b) => a.d.localeCompare(b.d)).slice(0, 5);
   const auton = (R.cash_m ?? 0) >= 0 ? "∞" : fmt((R.cash0 ?? 0) / -(R.cash_m ?? 1));
   const best = cmb.find((c) => !c.excluded.length);
+  const noBase = !(R.cash0 || R.cash_m || R.hours_w);
 
   return (
     <>
       <Top t="Panoramica" s="La tua situazione e le decisioni aperte">
         <Link href="/app/decisioni/nuova" className="btn pri"><Plus size={16} /> Nuova decisione</Link>
       </Top>
+
+      {(noBase || !decisions.length) && (
+        <div className="card stack" style={{ marginBottom: 16, background: "var(--navy)", color: "#d5e4f0", border: 0 }}>
+          <h3 style={{ color: "#fff", margin: 0 }}>Come iniziare</h3>
+          <div className="guide">
+            <Link href="/app/impostazioni" className="g" style={{ color: "inherit", textDecoration: "none" }}><span className="n" style={{ background: noBase ? "var(--orange)" : "var(--green)" }}>{noBase ? 1 : "✓"}</span><span><b style={{ color: "#fff" }}>La tua situazione</b><br /><small style={{ color: "#a9c3d8" }}>Risparmi, quanto ti resta al mese, ore libere. Due minuti.</small></span></Link>
+            <Link href="/app/decisioni/nuova" className="g" style={{ color: "inherit", textDecoration: "none" }}><span className="n" style={{ background: decisions.length ? "var(--green)" : "var(--orange)" }}>{decisions.length ? "✓" : 2}</span><span><b style={{ color: "#fff" }}>Racconta una decisione</b><br /><small style={{ color: "#a9c3d8" }}>Con parole tue: l&apos;Analista prepara la scheda.</small></span></Link>
+            <div className="g"><span className="n">3</span><span><b style={{ color: "#fff" }}>Segui i 5 passi</b><br /><small style={{ color: "#a9c3d8" }}>Alternative, cosa conta, valutazione, soldi, risultato.</small></span></div>
+          </div>
+        </div>
+      )}
 
       <div className="grid g4">
         <div className="card kpi"><div className="row between"><span className="l">Decisioni aperte</span><span className="iconwrap n" style={{ width: 32, height: 32 }}><GitFork size={16} /></span></div><div className="v">{open.length}</div><small>{decisions.length - open.length} chiuse o archiviate</small></div>

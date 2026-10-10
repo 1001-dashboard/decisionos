@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://danilorusciano.it"),
   title: "Decision OS · Il tuo spazio decisionale personale",
   description: "Analisi decisionale spiegabile: alternative, rischi, fatti e ipotesi, effetti tra le scelte, scenari e registro nel tempo.",
   openGraph: { images: ["/decisionos/brand/og.png"] },

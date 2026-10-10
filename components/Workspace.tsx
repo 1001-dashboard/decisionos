@@ -2,6 +2,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { sb } from "@/lib/supabase/client";
 import type { Decision, Dep, Resources, Rule } from "@/lib/engine";
+import { PRI_DEFAULT } from "@/lib/priorities";
 
 export type Profile = {
   resources: Resources;
@@ -21,14 +22,14 @@ export type Outcome = {
 export type Dec = Decision & { updated_at?: string; created_at?: string };
 
 const DEF_PROFILE: Profile = {
-  resources: { cash0: 0, cash_m: 0, hours_w: 40 },
+  resources: { cash0: 0, cash_m: 0, hours_w: 0 },
   resources_meta: {},
   rules: [
     { id: "r1", name: "Liquidità mai negativa", r: "cash_end", min: 0 },
     { id: "r2", name: "Autonomia minima", r: "autonomia_mesi", min: 6 },
     { id: "r3", name: "Ore libere non negative", r: "hours_w", min: 0 },
   ],
-  priorities: { stabilita: 3, crescita: 3, indipendenza: 3, benessere: 3 },
+  priorities: { ...PRI_DEFAULT },
   context: {},
   ai_share: { economia: false, contesto: false },
   horizon: 24,
@@ -86,7 +87,7 @@ export default function Workspace({ children }: { children: React.ReactNode }) {
       ]);
       const e = [p, d, dp, sn, oc].find((x) => x.error);
       if (e?.error) { setErr(`${e.error.message}. Hai eseguito supabase/schema.sql?`); setReady(true); return; }
-      if (p.data) setProfile({ ...DEF_PROFILE, ...p.data });
+      if (p.data) setProfile({ ...DEF_PROFILE, ...p.data, priorities: { ...PRI_DEFAULT, ...(p.data.priorities ?? {}) } });
       else await s.from("profiles").insert({ id: user.id, ...DEF_PROFILE });
       setDecisions((d.data ?? []).map((x: Dec) => ({ ...x, model: { ...({ criteria: [], constraints: [], options: [], assumptions: [] } as Dec["model"]), ...(x.model as Partial<Dec["model"]>) } })));
       setDeps((dp.data ?? []).map((x: { id: string; rule: Dep; confirmed: boolean }) => ({ ...x.rule, id: x.id, confirmed: x.confirmed })));

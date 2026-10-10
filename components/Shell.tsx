@@ -40,7 +40,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         </main>
       </div>
       <nav className="bottomnav">
-        {NAV.map(({ h, l, i: I }) => <Link key={h} href={h} className={on(h) ? "on" : ""}><I size={20} />{l.replace("Analista AI", "Analista").replace("Impostazioni", "Profilo")}</Link>)}
+        {NAV.map(({ h, l, i: I }) => <Link key={h} href={h} className={on(h) ? "on" : ""}><I size={20} />{({ Panoramica: "Home", Connessioni: "Legami", "Analista AI": "Analista", Impostazioni: "Profilo" } as Record<string, string>)[l] ?? l}</Link>)}
       </nav>
     </div>
   );
