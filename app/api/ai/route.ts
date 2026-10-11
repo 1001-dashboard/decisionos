@@ -3,6 +3,16 @@ import { NextResponse, type NextRequest } from "next/server";
 
 export const maxDuration = 30;
 import { sbServer } from "@/lib/supabase/server";
+import { redactMoney } from "@/lib/engine";
+
+/** Seconda barriera: se l'utente non ha abilitato le cifre economiche, nessun importo in € esce verso l'AI,
+ *  qualunque cosa abbia inviato la pagina. */
+function scrub(x: unknown): unknown {
+  if (typeof x === "string") return redactMoney(x);
+  if (Array.isArray(x)) return x.map(scrub);
+  if (x && typeof x === "object") return Object.fromEntries(Object.entries(x).filter(([k]) => !["im", "mi", "base"].includes(k)).map(([k, v]) => [k, scrub(v)]));
+  return x;
+}
 
 // Analista AI. Il modello interpreta e critica; i numeri li calcola il motore lato client.
 // Prompt compatti, chiavi JSON brevi, max_tokens bassi: costi contenuti.
@@ -46,7 +56,11 @@ export async function POST(req: NextRequest) {
   const { mode, payload } = await req.json().catch(() => ({}));
   const p = P[mode as string];
   if (!p || !payload) return NextResponse.json({ e: "Richiesta non valida" }, { status: 400 });
-  const body = JSON.stringify(payload);
+  const { data: prof } = await s.from("profiles").select("ai_share").eq("id", user.id).maybeSingle();
+  const eco = !!prof?.ai_share?.economia || payload?.eco === true;   // l'utente può abilitarle per una singola richiesta
+  const clean = eco ? payload : scrub(payload);
+  if (clean && typeof clean === "object") delete (clean as Record<string, unknown>).eco;
+  const body = JSON.stringify(clean);
   if (body.length > 24000) return NextResponse.json({ e: "Contenuto troppo lungo" }, { status: 413 });
 
   const day = new Date().toISOString().slice(0, 10);

@@ -6,9 +6,8 @@ import { ArrowLeft, Printer, CheckCircle2, AlertTriangle, XCircle, ThumbsUp, Thu
 import { useWs } from "@/components/Workspace";
 import { ScoreBars, LineChart, Legend, PAL } from "@/components/charts";
 import {
-  analyzeDecision, biasChecks, cashBreakpoint, cashSeries, crossEffects, eur, fmt, hashOf, normalize, solidity, tradeoff, turningPoints,
-  LEVELS, SCEN, type Scen,
-} from "@/lib/engine";
+  analyzeDecision, biasChecks, conclusive, cashBreakpoint, cashSeries, crossEffects, eur, fmt, hashOf, normalize, solidity, tradeoff, turningPoints,
+  LEVELS, SCEN, type Scen, untestedText } from "@/lib/engine";
 import { actionPlan, consequences, projection, valueText, HZ } from "@/lib/narrative";
 import { compact } from "@/lib/ai";
 import { PRI } from "@/lib/priorities";
@@ -30,7 +29,7 @@ export default function Report() {
     const res = analyzeDecision(d);
     const nm = normalize(d.model);
     const turns = turningPoints(d, res);
-    return { res, nm, turns, trade: tradeoff(d, res), sol: solidity(d, res), bias: biasChecks(d, res), plan: actionPlan(d, res, turns, d.due) };
+    return { res, nm, turns, concl: conclusive(d, res), trade: tradeoff(d, res), sol: solidity(d, res), bias: biasChecks(d, res), plan: actionPlan(d, res, turns, d.due) };
   }, [d]);
   // titolo della pagina = nome proposto per il PDF quando lo salvi
   useEffect(() => {
@@ -40,7 +39,7 @@ export default function Report() {
     return () => { document.title = prev; };
   }, [d]);
   if (!d || !data) return <div className="empty">Decisione non trovata. <Link href="/app/decisioni">Torna all&apos;elenco</Link></div>;
-  const { res, nm, turns, trade, sol, bias, plan } = data;
+  const { res, nm, turns, concl, trade, sol, bias, plan } = data;
   const m = d.model;
   const ok = res.rows.filter((r) => !r.excluded.length);
   const top = ok[0];
@@ -95,7 +94,9 @@ export default function Report() {
           <div className="rep-kicker">In sintesi</div>
           {!top ? <p className="big">Nessuna alternativa rispetta tutti i requisiti fissati.</p> : (
             <>
-              <p className="big">Con le priorità indicate prevale <b>{top.name}</b>: {gap}.{missing ? ` Risultato provvisorio: mancano ${missing} valori.` : ""}</p>
+              {concl.ok
+                ? <p className="big">Con le priorità indicate prevale <b>{top.name}</b>: {gap}.{missing ? ` Resta prima anche nel caso peggiore dei ${missing} valori mancanti.` : ""}</p>
+                : <p className="big">Classifica provvisoria: i dati non bastano per una conclusione. Mancano {missing} valori (fino al {concl.missW}% del peso) e potrebbe prevalere {concl.contenders.join(" oppure ")}.</p>}
               <dl>
                 <dt>Perché</dt><dd>Pesano soprattutto {drivers.map((x) => `«${x}»`).join(" e ") || "—"}.</dd>
                 {turns[0] && <><dt>A una condizione</dt><dd>{turns[0].text}</dd></>}
@@ -193,7 +194,7 @@ export default function Report() {
               <tr className="tot"><td>Punteggio</td>{m.options.map((o) => { const r = res.rows.find((x) => x.id === o.id)!; return <td key={o.id}>{r.excluded.length ? "scartata" : fmt(r.score)}{r.range ? ` (${fmt(r.range[0])}–${fmt(r.range[1])})` : ""}</td>; })}</tr>
             </tbody>
           </table>
-          <div style={{ marginTop: 12 }}><ScoreBars rows={res.rows} reasons /></div>
+          <div style={{ marginTop: 12 }}><ScoreBars rows={res.rows} reasons provisional={!concl.ok} /></div>
         </section>
 
         {/* SCAMBIO */}
@@ -213,7 +214,8 @@ export default function Report() {
           <H t="Scenari: soldi e tempo nel tempo" />
           {!hasMoney ? <p className="muted">Non sono stati indicati effetti su soldi e tempo: inseriscili nel passo «Soldi e tempo» per vedere gli scenari.</p> : (
             <>
-              <p>Risparmi a fine periodo per ogni alternativa, nei tre scenari. Proiezione lineare, senza probabilità: «se va male» e «se va bene» sono ipotesi, non previsioni.</p>
+              <p>Risparmi a fine periodo per ogni alternativa, nei tre scenari. Proiezione lineare (risparmi di oggi + differenza mensile × mesi), senza probabilità: «se va male» e «se va bene» sono ipotesi, non previsioni.</p>
+              {m.options.some((o) => (o.impacts ?? []).some((i) => i.src === "ai")) && <p className="rep-callout">Contiene importi stimati dall&apos;AI e non confermati ({m.options.filter((o) => (o.impacts ?? []).some((i) => i.src === "ai")).map((o) => `«${o.name}»`).join(", ")}): trattali come ipotesi da verificare.</p>}
               <table className="rt">
                 <thead><tr><th>Alternativa</th><th>Periodo</th>{SCEN.map((s) => <th key={s}>{SL[s]}</th>)}<th>Ore libere</th></tr></thead>
                 <tbody>{m.options.flatMap((o) => projection(o, R, rules).map((p, j) => (
@@ -262,7 +264,7 @@ export default function Report() {
           {sol && (
             <>
               <div className="solbar" style={{ maxWidth: "100%" }}><span className="f" style={{ width: `${100 - sol.estShare - sol.unkShare}%` }} /><span className="s" style={{ width: `${sol.estShare}%` }} /><span className="u" style={{ width: `${sol.unkShare}%` }} /></div>
-              <p>Punteggio di {top?.name}: <b>{100 - sol.estShare - sol.unkShare}%</b> su dati certi o dichiarati, <b>{sol.estShare}%</b> su stime, <b>{sol.unkShare}%</b> senza fonte. {!sol.tested ? "Nessuna stima da mettere alla prova." : sol.holds ? `Prova di stress superata: con le stime sbagliate del ${sol.pct * 100}% a suo sfavore resta prima.` : `Prova di stress non superata: con le stime sbagliate del ${sol.pct * 100}% vincerebbe ${sol.newTop}.`}</p>
+              <p>Punteggio di {top?.name}: <b>{100 - sol.estShare - sol.unkShare}%</b> su dati certi o dichiarati, <b>{sol.estShare}%</b> su stime, <b>{sol.unkShare}%</b> senza fonte. {!sol.tested ? untestedText(sol) : sol.holds ? `Prova di stress superata: con le stime sbagliate del ${sol.pct * 100}% a suo sfavore resta prima.` : `Prova di stress non superata: con le stime sbagliate del ${sol.pct * 100}% vincerebbe ${sol.newTop}.`}</p>
             </>
           )}
           {res.fragile.length > 0 && <p><b>Sensibilità:</b> la classifica cambia con piccole variazioni di importanza su {res.fragile.map((f) => `«${f.name}»`).join(" e ")}.</p>}

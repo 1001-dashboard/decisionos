@@ -307,3 +307,5 @@ table.rt td.num { font-variant-numeric: tabular-nums; } table.rt td.neg { color:
   .rh { break-after: avoid; }
   .rep-sum { break-inside: avoid; }
 }
+.aiflag { display: grid; gap: 6px; background: #f3f0ff; border: 1px solid #ddd5fb; color: #3d2f7a; border-radius: 10px; padding: 8px 10px; font-size: 13px; }
+.aiflag .btn { justify-self: start; }

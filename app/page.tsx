@@ -23,7 +23,7 @@ const AMBIENTI = [
   ["Panoramica", "La tua situazione", "Decisioni aperte, vincoli, scadenze, risorse.", <LayoutDashboard key="a" size={22} />],
   ["Decisioni", "Confronta le opzioni", "Una procedura guidata in 5 passi, con valori reali o giudizi.", <GitFork key="b" size={22} />],
   ["Connessioni", "Effetti tra le scelte", "Conflitti, requisiti e costi condivisi.", <Link2 key="c" size={22} />],
-  ["Scenari", "Simula il futuro", "Da 3 mesi a 5 anni: favorevole, centrale, sfavorevole.", <TrendingUp key="d" size={22} />],
+  ["Scenari", "Simula il futuro", "Da 3 mesi a 5 anni, tre scenari. Proiezioni, non previsioni.", <TrendingUp key="d" size={22} />],
   ["Analista AI", "Analisi critica", "Dal racconto al quadro: domande, pro e contro, criteri spiegati. Poi il parere contrario.", <Bot key="e" size={22} />],
   ["Registro", "Risultati nel tempo", "Analisi congelate, scelte prese, verifiche.", <History key="f" size={22} />],
 ] as const;

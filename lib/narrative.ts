@@ -50,6 +50,8 @@ export function consequences(dec: Decision, r: DecResult, o: Opt, others: Decisi
   // soldi e tempo
   const imp = (k: string) => (o.impacts ?? []).find((i) => i.r === k);
   const c0 = imp("cash0"), cm = imp("cash_m"), hw = imp("hours_w");
+  const ai = (o.impacts ?? []).some((x) => x.src === "ai");
+  if (ai) out.push({ tone: "warn", t: "Gli importi su soldi e tempo di questa alternativa sono stime dell'AI, non ancora confermate: le cifre qui sotto vanno verificate." });
   if (!c0 && !cm && !hw) out.push({ tone: "warn", t: "Non hai indicato effetti su soldi e tempo: le conseguenze economiche non sono valutate." });
   else {
     if (c0) out.push({ tone: (c0.v as number) < 0 ? "warn" : "ok", t: (c0.v as number) < 0 ? `Ti costa subito ${eur(-(c0.v as number))}.` : `Ti porta subito ${eur(c0.v as number)}.` });
@@ -95,6 +97,8 @@ export function actionPlan(dec: Decision, r: DecResult, turns: { text: string }[
     const noSrc = top.detail.filter((d) => d.s != null && !d.meta?.rel).length;
     if (noSrc) out.push(`Indica la fonte di ${noSrc} valori di ${top.name}: oggi non sai se sono certi o stimati`);
   }
+  for (const o of dec.model.options.filter((x) => (x.impacts ?? []).some((i) => i.src === "ai")))
+    out.push(`Verifica gli importi stimati dall'AI per «${o.name}» (spesa iniziale, differenza mensile, ore) prima di fidarti degli scenari`);
   if (turns[0]) out.push(`Usa la soglia di svolta come limite di trattativa: ${turns[0].text}`);
   out.push(due ? `Decidi entro il ${new Date(due).toLocaleDateString("it-IT")}: congela l'analisi e registra la scelta` : "Fissa una data entro cui decidere, poi congela l'analisi e registra la scelta");
   out.push("Fissa una data di revisione (es. a 3 mesi) per confrontare previsioni e realtà");

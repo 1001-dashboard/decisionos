@@ -8,7 +8,8 @@ export type Crit = {
   why?: string;   // perché conta (proposto dall'Analista o scritto da te)
 };
 export type Constraint = { id: string; name: string; crit: string; min?: number | null; max?: number | null };
-export type Impact = { r: string; v: number | [number, number, number]; tag?: string };
+/** src: chi ha messo il valore. "ai" = stima dell'Analista non ancora confermata da te. */
+export type Impact = { r: string; v: number | [number, number, number]; tag?: string; src?: "ai" | "user" };
 export type Meta = { why?: string; rel?: Rel; src?: string; dt?: string };
 export type Opt = {
   id: string; name: string; note?: string;
@@ -333,6 +334,7 @@ export function tradeoff(dec: Decision, r: DecResult): Trade | null {
   const est = A.detail.filter((d) => d.meta?.rel === "S" && d.s != null).map((d) => d.name);
   if (est.length) risks.push(`${est.join(", ")}: ${est.length > 1 ? "sono stime" : "è una stima"}, non un dato certo.`);
   if (A.pending.length) risks.push(`Requisito non ancora verificato: ${A.pending.join("; ")}.`);
+  if ((oA.impacts ?? []).some((i) => i.src === "ai")) risks.push(`Gli importi su soldi e tempo di ${A.name} sono stime dell'AI, non dati tuoi.`);
   const cm = (oA.impacts ?? []).find((i) => i.r === "cash_m");
   if (cm && Array.isArray(cm.v) && cm.v[0] < cm.v[1]) risks.push(`Se va male, al mese cambia di ${eur(cm.v[0])} invece di ${eur(cm.v[1])}.`);
   for (const a of (dec.model.assumptions ?? []).filter((x) => x.rel === "?").slice(0, 2)) risks.push(`Ancora da chiarire: ${a.t}${/[.?!]$/.test(a.t) ? "" : "."}`);
@@ -345,7 +347,14 @@ export function tradeoff(dec: Decision, r: DecResult): Trade | null {
 }
 
 /* ---------- Solidità delle stime ---------- */
-export type Solidity = { estShare: number; unkShare: number; nEst: number; tested: boolean; holds: boolean; newTop?: string; pct: number };
+export type Solidity = { estShare: number; unkShare: number; nEst: number; tested: boolean; holds: boolean; newTop?: string; pct: number; alone?: boolean };
+
+/** Frase quando la prova di stress non si può fare. */
+export function untestedText(s: Solidity) {
+  if (s.alone) return `Non c'è un'altra alternativa valida con cui confrontarla, quindi la prova di stress non si applica${s.estShare + s.unkShare > 0 ? ": le stime e i valori senza fonte restano da verificare" : ""}.`;
+  if (s.estShare + s.unkShare > 0) return "Nessuna stima marcata da mettere alla prova, ma alcuni valori non hanno una fonte: indicala per sapere quanto fidarti.";
+  return "Nessuna stima da mettere alla prova: il risultato si basa su dati certi o dichiarati.";
+}
 
 export function solidity(dec: Decision, r: DecResult, pct = 0.2): Solidity | null {
   const ok = r.rows.filter((x) => !x.excluded.length);
@@ -371,7 +380,7 @@ export function solidity(dec: Decision, r: DecResult, pct = 0.2): Solidity | nul
       }
     }
   }
-  if (!nEst || ok.length < 2) return { estShare, unkShare, nEst, tested: false, holds: true, pct };
+  if (!nEst || ok.length < 2) return { estShare, unkShare, nEst, tested: false, holds: true, pct, alone: ok.length < 2 };
   const r2 = analyzeDecision({ ...dec, model: mm });
   const t2 = r2.rows.find((x) => !x.excluded.length);
   const holds = t2?.id === A.id;
@@ -466,4 +475,29 @@ export function biasChecks(dec: Decision, r: DecResult): Bias[] {
   if ((r.margin ?? 0) > 0 && (r.margin ?? 0) < 2)
     out.push({ k: "pari", t: `Tra ${A.name} e ${B.name} ci sono meno di 2 punti: i numeri non decidono. Va bene scegliere con il cuore, purché tu lo sappia.` });
   return out;
+}
+
+/* ---------- Privacy: cosa è una cifra economica ---------- */
+const MONEY_NAME = /soldi|stipend|reddit|guadagn|margine|economic|risparm|costo|prezz|spes|affitt|rata|anticip|investiment|€|euro/i;
+export const isMoneyCrit = (c: Crit) => (c.kind === "num" && /€|eur/i.test(c.unit ?? "")) || (c.kind === "num" && MONEY_NAME.test(c.name));
+/** Oscura gli importi in € in un testo libero ("3.200 €", "€ 1.450", "2k euro", "1.500 euro al mese"). */
+export function redactMoney(t: string): string {
+  return t
+    .replace(/€\s*\d[\d.,']*(\s*(k|mila)\b)?/gi, "[cifra]")
+    .replace(/\d[\d.,']*(\s*(k|mila))?\s*(€|euro\b|eur\b)/gi, "[cifra]");
+}
+
+/* ---------- Conclusività: la prima resta prima anche nel caso peggiore dei dati mancanti? ---------- */
+export type Concl = { ok: boolean; missing: number; missW: number; contenders: string[] };
+export function conclusive(dec: Decision, r: DecResult): Concl {
+  const ok = r.rows.filter((x) => !x.excluded.length);
+  const missing = ok.reduce((a, x) => a + x.missing.length, 0);
+  const tw = r.weightSum || 1;
+  const nm = normalize(dec.model);
+  const missW = Math.round(Math.max(0, ...ok.map((x) => nm.criteria.filter((c) => x.missing.includes(c.name)).reduce((a, c) => a + c.w, 0))) / tw * 100);
+  if (ok.length < 2 || !missing) return { ok: true, missing, missW, contenders: [] };
+  const lo = (x: Row) => (x.range ? x.range[0] : x.score), hi = (x: Row) => (x.range ? x.range[1] : x.score);
+  const best = ok.reduce((a, b) => (lo(b) > lo(a) ? b : a));              // chi ha il caso peggiore più alto
+  const rivals = ok.filter((x) => x.id !== best.id && hi(x) >= lo(best));  // chi potrebbe ancora superarla
+  return { ok: !rivals.length, missing, missW, contenders: rivals.length ? [best.name, ...rivals.map((x) => x.name)] : [] };
 }

@@ -4,7 +4,7 @@ import { fmt } from "@/lib/engine";
 export const PAL = ["#15406a", "#13879a", "#e49b2f", "#7fa8c9", "#5fbccb", "#c27a1a", "#33597d", "#a9cbe3"];
 
 /** Barre impilate: ogni segmento = contributo di un criterio (peso × valore). */
-export function ScoreBars({ rows, reasons = true }: { rows: Row[]; reasons?: boolean }) {
+export function ScoreBars({ rows, reasons = true, provisional = false }: { rows: Row[]; reasons?: boolean; provisional?: boolean }) {
   const crit = rows[0]?.detail ?? [];
   return (
     <div className="stack">
@@ -22,7 +22,7 @@ export function ScoreBars({ rows, reasons = true }: { rows: Row[]; reasons?: boo
             <span className="row" style={{ gap: 8 }}>
               {r.excluded.length ? <span className="pill bad">esclusa</span> : null}
               {r.range ? <span className="pill warn">range {fmt(r.range[0])}–{fmt(r.range[1])}</span> : null}
-              <span className="num" style={{ font: "600 18px var(--fh)", color: "var(--navy)" }}>{fmt(r.score)}</span>
+              {provisional && r.range ? null : <span className="num" style={{ font: "600 18px var(--fh)", color: provisional ? "var(--muted)" : "var(--navy)" }}>{fmt(r.score)}</span>}
             </span>
           </div>
           <div style={{ display: "flex", height: 14, borderRadius: 99, overflow: "hidden", background: "var(--sky-l)" }}>

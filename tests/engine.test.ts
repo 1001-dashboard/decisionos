@@ -235,3 +235,43 @@ console.log("engine: 10/10 ok");
   assert.ok(E.biasChecks(d3, E.analyzeDecision(d3)).some((b) => b.k === "doppio"));
   console.log("engine: autonomia e doppio conteggio ok");
 }
+
+// 20. privacy: nessun importo in € verso l'AI se non abilitato
+{
+  const E = await import("../lib/engine.ts");
+  const { compact, structToModel } = await import("../lib/ai.ts");
+  for (const [a, b] of [["stipendio 3.200 € al mese", "stipendio [cifra] al mese"], ["€ 1.450 di affitto", "[cifra] di affitto"], ["2k euro", "[cifra]"], ["1.500 euro", "[cifra]"], ["3 figli e 40 ore", "3 figli e 40 ore"]])
+    assert.equal(E.redactMoney(a), b, a);
+  const { exampleDecision } = await import("../lib/demo.ts");
+  const ex: Decision = JSON.parse(JSON.stringify(exampleDecision));
+  ex.descr = "Stipendio netto 3.200 € e affitto 1.450 euro";
+  const off = JSON.stringify(compact(ex, E.analyzeDecision(ex), { eco: false, res: { cash0: 12000 } }));
+  assert.ok(!/\d[\d.,]*\s*(€|euro)/i.test(off) && !off.includes("1500") && !off.includes("700 ") && !off.includes("12000"), off);
+  assert.ok(off.includes("cifra oscurata") && !off.includes('"im"'));
+  const on = JSON.stringify(compact(ex, E.analyzeDecision(ex), { eco: true, res: { cash0: 12000 } }));
+  assert.ok(on.includes("3.200 €") && on.includes("700 €/mese") && on.includes('"eco":true'));
+  // 21. provenienza: importi proposti dall'AI marcati, e segnalati nei rischi
+  const sm = structToModel({ a: [{ n: "Vado" }, { n: "Resto" }], c: [{ n: "Famiglia", t: "g", i: 4 }], s: [{ a: "Vado", c: "Famiglia", v: 3 }, { a: "Resto", c: "Famiglia", v: 2 }],
+    mi: [{ a: "Vado", r: "cash0", v: [-7000, -6000, -5000] }] });
+  assert.equal(sm.model.options[0].impacts![0].src, "ai");
+  const d: Decision = { id: "x", name: "x", status: "aperta", imp: 1, model: sm.model };
+  assert.ok(E.tradeoff(d, E.analyzeDecision(d))!.risks.some((r) => r.includes("stime dell'AI")));
+  // 22. conclusività con dati mancanti
+  const mk = (ra: Record<string, number>, rb: Record<string, number>): Decision => ({ id: "c", name: "c", status: "aperta", imp: 1, model: { constraints: [],
+    criteria: [{ id: "p", name: "P", w: 0, imp: 3, kind: "g" }, { id: "q", name: "Q", w: 0, imp: 3, kind: "g" }],
+    options: [{ id: "a", name: "A", s: ra }, { id: "b", name: "B", s: rb }] } });
+  const c1 = mk({ p: 100 }, { p: 25, q: 50 });           // A: 50..100, B: 37,5 -> A vince comunque
+  assert.ok(E.conclusive(c1, E.analyzeDecision(c1)).ok);
+  const c2 = mk({ p: 75 }, { p: 50, q: 75 });            // A: 37,5..87,5, B: 62,5 -> non conclusivo
+  const k2 = E.conclusive(c2, E.analyzeDecision(c2));
+  assert.ok(!k2.ok && k2.contenders.includes("A") && k2.contenders.includes("B") && k2.missW === 50, JSON.stringify(k2));
+  console.log("engine: privacy, provenienza AI, conclusività ok");
+  // 23. solidità: un'unica alternativa valida con stime non deve dire «nessuna stima»
+  const so: Decision = { id: "s", name: "s", status: "aperta", imp: 1, model: { criteria: [{ id: "p", name: "P", w: 0, imp: 3, kind: "g" }],
+    constraints: [{ id: "k", name: "k", crit: "p", min: 40 }],
+    options: [{ id: "a", name: "A", s: { p: 75 }, m: { p: { rel: "S" } } }, { id: "b", name: "B", s: { p: 25 } }] } };
+  const sl = E.solidity(so, E.analyzeDecision(so))!;
+  assert.ok(!sl.tested && sl.alone && sl.estShare === 100);
+  assert.ok(!E.untestedText(sl).includes("Nessuna stima") && E.untestedText(sl).includes("da verificare"));
+  console.log("engine: solidità senza confronto ok");
+}

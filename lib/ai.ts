@@ -1,5 +1,5 @@
 import { BP } from "./bp.ts";
-import { uid, LEVELS, levelOf, type Decision, type DecResult, type Model, type Rel, type Resources } from "./engine.ts";
+import { uid, LEVELS, levelOf, isMoneyCrit, redactMoney, normalize, type Decision, type DecResult, type Model, type Rel, type Resources } from "./engine.ts";
 
 export async function ai<T = unknown>(mode: string, payload: unknown): Promise<T> {
   const r = await fetch(`${BP}/api/ai`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode, payload }) });
@@ -8,28 +8,47 @@ export async function ai<T = unknown>(mode: string, payload: unknown): Promise<T
   return j.data as T;
 }
 
-/** Payload minimo per l'AI: chiavi brevi, solo ciò che serve. Cifre economiche solo se consentito. */
+/** Payload minimo per l'AI: chiavi brevi, solo ciò che serve.
+ *  Con eco=false nessun importo in € esce: i valori dei criteri economici diventano una posizione sulla scala
+ *  (es. "buono"), le soglie in € spariscono, i testi liberi vengono ripuliti. Il server applica comunque una seconda pulizia. */
 export function compact(d: Decision, r: DecResult | undefined, opts: { eco: boolean; ctx?: string; res?: Resources }) {
   const m = d.model;
+  const nm = normalize(m);
+  const tx = (t?: string) => (t == null ? undefined : opts.eco ? t : redactMoney(t));
+  const money = (cid: string) => { const c = m.criteria.find((x) => x.id === cid); return !!c && isMoneyCrit(c); };
   return {
-    n: d.name, t: d.descr || undefined,
-    c: m.criteria.map((c) => [c.name, c.imp ? `imp ${c.imp}/5` : c.w, ...(c.kind === "num" ? [`${c.worst}→${c.best} ${c.unit ?? ""}`.trim()] : [])]),
-    v: m.constraints.map((k) => `${m.criteria.find((c) => c.id === k.crit)?.name} ${k.min != null ? "≥" + k.min : ""}${k.max != null ? "≤" + k.max : ""}`),
+    n: tx(d.name), t: tx(d.descr || undefined),
+    ...(opts.eco ? { eco: true } : { privacy: "importi in € oscurati per scelta dell'utente: ragiona su posizioni relative" }),
+    c: m.criteria.map((c) => [c.name, c.imp ? `imp ${c.imp}/5` : c.w,
+      ...(c.kind === "num" ? [!opts.eco && isMoneyCrit(c) ? `scala in ${c.unit ?? "€"} (importi oscurati)` : `${c.worst}→${c.best} ${c.unit ?? ""}`.trim()] : [])]),
+    v: m.constraints.map((k) => {
+      const nmC = m.criteria.find((c) => c.id === k.crit)?.name;
+      return !opts.eco && money(k.crit) ? `${nmC}: soglia minima/massima in € (oscurata)` : `${nmC} ${k.min != null ? "≥" + k.min : ""}${k.max != null ? "≤" + k.max : ""}`;
+    }),
     o: m.options.map((o) => ({
-      id: o.id, n: o.name,
-      s: Object.fromEntries(m.criteria.map((c) => [c.name,
-        c.kind === "num" ? (o.raw?.[c.id] == null ? null : `${o.raw[c.id]} ${c.unit ?? ""}`.trim())
-        : o.s[c.id] == null ? null : c.kind === "g" ? LEVELS[levelOf(o.s[c.id])] : o.s[c.id]])),
-      y: Object.fromEntries(Object.entries(o.m ?? {}).filter(([, x]) => x.why).map(([k, x]) => [m.criteria.find((c) => c.id === k)?.name ?? k, `${x.why} [${x.rel ?? "D"}]`])),
-      ...(opts.eco ? { im: (o.impacts ?? []).map((i) => [i.r, i.v]) } : {}),
+      id: o.id, n: tx(o.name),
+      s: Object.fromEntries(m.criteria.map((c) => {
+        if (c.kind === "num") {
+          if (o.raw?.[c.id] == null) return [c.name, null];
+          if (!opts.eco && isMoneyCrit(c)) {
+            const sc = nm.options.find((x) => x.id === o.id)?.s[c.id];
+            return [c.name, sc == null ? "cifra oscurata" : `${LEVELS[levelOf(sc)].toLowerCase()} sulla scala (cifra oscurata)`];
+          }
+          return [c.name, `${o.raw[c.id]} ${c.unit ?? ""}`.trim()];
+        }
+        return [c.name, o.s[c.id] == null ? null : c.kind === "g" ? LEVELS[levelOf(o.s[c.id])] : o.s[c.id]];
+      })),
+      y: Object.fromEntries(Object.entries(o.m ?? {}).filter(([, x]) => x.why).map(([k, x]) => [m.criteria.find((c) => c.id === k)?.name ?? k, `${tx(x.why)} [${x.rel ?? "D"}]`])),
+      ...((o.pro?.length || o.con?.length) ? { pc: [(o.pro ?? []).map((x) => tx(x)), (o.con ?? []).map((x) => tx(x))] } : {}),
+      ...(opts.eco ? { im: (o.impacts ?? []).map((i) => [i.r, i.v, i.src === "ai" ? "stima AI" : ""]) } : {}),
     })),
-    i: (m.assumptions ?? []).map((a) => `${a.t} [${a.rel}${a.aff ? "," + a.aff : ""}]`),
+    i: (m.assumptions ?? []).map((a) => `${tx(a.t)} [${a.rel}${a.aff ? "," + a.aff : ""}]`),
     ...(r ? {
-      r: r.rows.map((x) => [x.name, x.score, x.excluded.length ? "ESCLUSA:" + x.excluded.join(";") : x.range ? `range ${x.range.join("-")}` : ""]),
+      r: r.rows.map((x) => [x.name, x.score, x.excluded.length ? "ESCLUSA:" + tx(x.excluded.join(";")) : x.range ? `range ${x.range.join("-")}` : ""]),
       sens: r.sens.filter((s) => s.delta != null).map((s) => `${s.name} ${s.delta}pt→${r.rows.find((x) => x.id === s.newTop)?.name}`),
     } : {}),
     ...(opts.eco && opts.res ? { base: opts.res } : {}),
-    ...(opts.ctx ? { ctx: opts.ctx } : {}),
+    ...(opts.ctx ? { ctx: tx(opts.ctx) } : {}),
   };
 }
 
@@ -75,7 +94,7 @@ export function structToModel(x: AiStruct): { name: string; model: Model; questi
     const o = oid(i.a);
     if (!o || !["cash0", "cash_m", "hours_w"].includes(i.r)) continue;
     const v = Array.isArray(i.v) && i.v.length === 3 ? (i.v.map(Number) as [number, number, number]) : Number(Array.isArray(i.v) ? i.v[0] : i.v);
-    o.impacts.push({ r: i.r, v, ...(i.t ? { tag: i.t } : {}) });
+    o.impacts.push({ r: i.r, v, src: "ai", ...(i.t ? { tag: i.t } : {}) });   // importo proposto dall'AI: resta «stima» finché non lo confermi
   }
   const constraints = arr<NonNullable<AiStruct["v"]>[0]>(x.v).flatMap((k) => {
     const c = cid(k.c);

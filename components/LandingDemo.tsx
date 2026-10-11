@@ -2,8 +2,7 @@
 import { useMemo, useState } from "react";
 import { Award, Scale, Link2, TrendingUp, RotateCcw, CheckCircle2, AlertCircle, TrendingDown, ShieldAlert, Lightbulb, Brain } from "lucide-react";
 import {
-  analyzeDecision, crossEffects, normalize, solidity, tradeoff, turningPoints, biasChecks, fmt, eur, LEVELS, levelOf, type Decision,
-} from "@/lib/engine";
+  analyzeDecision, crossEffects, normalize, solidity, tradeoff, turningPoints, biasChecks, fmt, eur, LEVELS, levelOf, type Decision, untestedText } from "@/lib/engine";
 import { exampleDecision, demoProject, landingResources, landingRules } from "@/lib/demo";
 import { ScoreBars } from "./charts";
 import ScenarioPanel from "./ScenarioPanel";
@@ -97,7 +96,7 @@ export default function LandingDemo() {
             <div className="solbar"><span className="f" style={{ width: `${100 - so.estShare - so.unkShare}%` }} /><span className="s" style={{ width: `${so.estShare}%` }} /><span className="u" style={{ width: `${so.unkShare}%` }} /></div>
             <small>Punteggio di {top?.name}: {100 - so.estShare - so.unkShare}% dati certi o dichiarati · {so.estShare}% stime · {so.unkShare}% senza fonte</small>
             <div className={`note ${so.tested && !so.holds ? "bad" : ""}`}>
-              {!so.tested ? "Nessuna stima da mettere alla prova." : so.holds ? `Prova superata: con le stime sbagliate del 20% a sfavore di ${top?.name}, resta prima.` : `Con le stime sbagliate del 20% passerebbe in testa ${so.newTop}: verifica prima di decidere.`}
+              {!so.tested ? untestedText(so) : so.holds ? `Prova superata: con le stime sbagliate del 20% a sfavore di ${top?.name}, resta prima.` : `Con le stime sbagliate del 20% passerebbe in testa ${so.newTop}: verifica prima di decidere.`}
             </div>
             <div className="tablewrap"><table className="t"><thead><tr><th>Alternativa</th><th>Dato</th><th>Valore</th><th>Fonte</th></tr></thead>
               <tbody>{ex.model.options.flatMap((o) => nm.criteria.map((c, i) => {

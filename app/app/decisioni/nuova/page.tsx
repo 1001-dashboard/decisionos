@@ -11,7 +11,7 @@ import { useWs } from "@/components/Workspace";
 import { Top } from "@/components/Shell";
 import { ai, structToModel, type AiStruct } from "@/lib/ai";
 import { exampleDecision } from "@/lib/demo";
-import { uid, weightsFromImp, type Model } from "@/lib/engine";
+import { uid, weightsFromImp, redactMoney, type Model } from "@/lib/engine";
 
 const TI: Record<string, React.ReactNode> = { briefcase: <Briefcase size={20} />, home: <Home size={20} />, car: <Car size={20} />, rocket: <Rocket size={20} />, package: <Package size={20} />, users: <Users size={20} />, graduation: <GraduationCap size={20} />, piggy: <PiggyBank size={20} /> };
 const REL = { F: ["ok", "verificato"], D: ["info", "dichiarato"], S: ["warn", "stima"], "?": ["bad", "da chiarire"] } as const;
@@ -27,6 +27,7 @@ export default function Nuova() {
   const [busy, setBusy] = useState(false);
   const [e, setE] = useState("");
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [eco, setEco] = useState(profile.ai_share.economia);
   const answers = () => (draft?.questions ?? []).map((q, i) => (ans[i]?.trim() ? `${q} ${ans[i].trim()}` : "")).filter(Boolean);
 
   async function struttura() {
@@ -34,7 +35,8 @@ export default function Nuova() {
     try {
       const ctx = profile.ai_share.contesto ? Object.entries(profile.context).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("; ") : undefined;
       const rr = answers();
-      const x = await ai<AiStruct>("struttura", { t, pr: profile.priorities, ...(rr.length ? { r: rr } : {}), ...(ctx ? { ctx } : {}) });
+      const tx = (v: string) => (eco ? v : redactMoney(v));
+      const x = await ai<AiStruct>("struttura", { t: tx(t), pr: profile.priorities, ...(rr.length ? { r: rr.map(tx) } : {}), ...(ctx ? { ctx: tx(ctx) } : {}), ...(eco ? { eco: true } : {}) });
       const d = structToModel(x);
       if (!d.model.options.length && !d.model.criteria.length) { setE("L'Analista non ha prodotto un quadro utilizzabile: riprova, magari aggiungendo qualche dettaglio."); return; }
       setDraft(d); setAns(rr.length ? [] : ans);
@@ -77,7 +79,8 @@ export default function Nuova() {
           </div>
           {busy && <small>L&apos;Analista sta preparando il quadro…</small>}
           {e && <div className="err">{e}</div>}
-          <small>L&apos;Analista non ti dice cosa scegliere: ti propone cosa guardare. All&apos;AI vanno il testo e le tue priorità generali{profile.ai_share.contesto ? ", più il tuo contesto" : ""}.</small>
+          <label className="row" style={{ gap: 8, fontSize: 14 }}><input type="checkbox" checked={eco} onChange={(e) => setEco(e.target.checked)} /> Includi le cifre in € (stipendio, affitto…) in questa richiesta</label>
+          <small>L&apos;Analista non ti dice cosa scegliere: ti propone cosa guardare. All&apos;AI vanno il testo e le tue priorità generali{profile.ai_share.contesto ? ", più il tuo contesto" : ""}. {eco ? "Le cifre in € vengono inviate." : "Le cifre in € vengono oscurate prima dell'invio: gli importi li inserisci tu dopo."}</small>
         </div>
 
         <div className="card stack">

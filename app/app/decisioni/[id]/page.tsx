@@ -10,9 +10,8 @@ import { useWs } from "@/components/Workspace";
 import { ScoreBars } from "@/components/charts";
 import {
   analyzeDecision, applyCombo, combos, eur, fmt, normalize, turningPoints, uid, weightsFromImp, scaleNum, levelOf,
-  tradeoff, solidity, crossEffects, hashOf, biasChecks,
-  LEVELS, type Crit, type Decision, type Impact, type Model, type Opt, type Rel,
-} from "@/lib/engine";
+  tradeoff, solidity, crossEffects, hashOf, biasChecks, conclusive,
+  LEVELS, type Crit, type Decision, type Impact, type Model, type Opt, type Rel, untestedText } from "@/lib/engine";
 import { CRIT_LIB } from "@/lib/templates";
 import { impFor, priGap } from "@/lib/priorities";
 import { ai, compact } from "@/lib/ai";
@@ -162,6 +161,7 @@ export default function DecisionPage() {
   const ok = res.rows.filter((r) => !r.excluded.length);
   const top = ok[0];
   const provisional = st.missing.length > 0;
+  const concl = conclusive(d, res);
   const R = ws.profile.resources;
   const cOpt = crossOpt && m.options.some((o) => o.id === crossOpt) ? crossOpt : top?.id ?? m.options[0]?.id ?? "";
   const cross = cOpt ? crossEffects(cOpt, d, others, ws.deps, R, ws.profile.rules, ws.profile.horizon) : [];
@@ -187,7 +187,8 @@ export default function DecisionPage() {
     const mg = res!.margin ?? 0;
     const gap = ok.length < 2 ? "è l'unica che rispetta i requisiti" : mg === 0 ? "è alla pari con " + ok[1].name : mg < 3 ? `è quasi alla pari con ${ok[1].name}` : mg < 10 ? `ha un vantaggio contenuto su ${ok[1].name}` : `ha un vantaggio netto su ${ok[1].name}`;
     if (ok.length < 2 && !provisional) return { tone: "ok", t: `Con le tue priorità di oggi prevale ${top.name}.`, s: `${top.name} è l'unica che rispetta tutti i tuoi requisiti.` };
-    if (provisional) return { tone: "warn", t: `Per ora prevale ${top.name}, ma è un risultato provvisorio.`, s: `Mancano ${st!.missing.length} valori: completali al passo 3 prima di fidarti.` };
+    if (provisional && !concl.ok) return { tone: "warn", t: "Classifica provvisoria: i dati non bastano per una conclusione.", s: `Mancano ${st!.missing.length} valori (fino al ${concl.missW}% del peso). Con quei dati potrebbe prevalere ${concl.contenders.join(" oppure ")}. Completali al passo 3.` };
+    if (provisional) return { tone: "warn", t: `Prevale ${top.name} anche nel caso peggiore dei dati mancanti.`, s: `Mancano ancora ${st!.missing.length} valori, ma nessuno di essi può ribaltare la classifica. Completali comunque per affinare il risultato.` };
     return { tone: mg < 3 || res!.fragile.length ? "warn" : "ok", t: `Con le tue priorità di oggi prevale ${top.name}.`, s: `${top.name} ${gap}${res!.fragile.length ? ", ma la classifica cambia facilmente se cambi l'importanza di un criterio" : ""}.` };
   }
   const V = verdict();
@@ -438,6 +439,12 @@ export default function DecisionPage() {
               return (
                 <div key={o.id} className="card stack">
                   <div className="row" style={{ flexWrap: "nowrap" }}><span className="optbadge" style={{ background: ["#15406a", "#13879a", "#e49b2f"][i] }}>{String.fromCharCode(65 + i)}</span><h3 style={{ margin: 0 }}>{o.name || "(senza nome)"}</h3></div>
+                  {(o.impacts ?? []).some((x) => x.src === "ai") && (
+                    <div className="aiflag">
+                      <span><b>Stima dell&apos;AI</b>: questi importi li ha proposti l&apos;Analista, non sono dati tuoi. Correggili o confermali.</span>
+                      <button className="btn sm" onClick={() => setM((mm) => { opt(mm, o.id).impacts?.forEach((x) => { delete x.src; }); })}><Check size={14} /> Li confermo</button>
+                    </div>
+                  )}
                   <div>
                     <label className="f">Spesa iniziale una tantum</label>
                     <Num value={c0 ? -(c0.v as number) : null} suffix="€" onChange={(v) => setImpact(o.id, "cash0", v == null ? null : -Math.abs(v), c0?.tag)} />
@@ -519,7 +526,7 @@ export default function DecisionPage() {
                 </div>
                 <small>Punteggio di {top?.name}: <b>{100 - sol.estShare - sol.unkShare}%</b> su dati certi o dichiarati · <b>{sol.estShare}%</b> su stime{sol.unkShare ? <> · <b>{sol.unkShare}%</b> senza fonte indicata</> : null}</small>
                 <p style={{ margin: "8px 0 0" }}>
-                  {!sol.tested ? "Nessuna stima da mettere alla prova: il risultato si basa su dati certi o dichiarati."
+                  {!sol.tested ? untestedText(sol)
                     : sol.holds ? <>Prova superata: anche se le tue stime fossero sbagliate del {sol.pct * 100}% a sfavore di {top?.name}, resterebbe prima.</>
                     : <><b>Attenzione:</b> se le stime fossero sbagliate del {sol.pct * 100}% a sfavore di {top?.name}, passerebbe in testa <b>{sol.newTop}</b>. Verifica le stime prima di decidere.</>}
                 </p>
@@ -529,7 +536,7 @@ export default function DecisionPage() {
           <div className="grid g2" style={{ alignItems: "start" }}>
             <div className="card stack">
               <h3 style={{ margin: 0 }}>Il confronto</h3>
-              {m.criteria.length && m.options.length ? <ScoreBars rows={res.rows} reasons={false} /> : <small>Niente da confrontare ancora.</small>}
+              {m.criteria.length && m.options.length ? <ScoreBars rows={res.rows} reasons={false} provisional={!concl.ok} /> : <small>Niente da confrontare ancora.</small>}
               {res.rows.filter((r) => r.excluded.length).map((r) => <div key={r.id} className="note bad"><b>{r.name}</b> è scartata: {r.excluded.join("; ")}.</div>)}
               {res.rows.filter((r) => r.pending.length).map((r) => <div key={r.id} className="note warn"><b>{r.name}</b>: requisito da verificare ({r.pending.join("; ")}).</div>)}
               {res.warn.filter((w) => !w.startsWith("Somma pesi")).map((w) => <div key={w} className="note warn">{w}</div>)}
