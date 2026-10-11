@@ -563,5 +563,19 @@ console.log("engine: 10/10 ok");
   vD.model.options[0].st = "scelta";
   const sR = E.readiness(vD, E.analyzeDecision(vD));
   assert.ok(sR.chosen && sR.chosen.name === "Compro attrezzatura" && sR.chosen.wasLead && sR.state === "pronta");
+  // 56. la chiusura dello spazio delle alternative vale solo per il contesto in cui è stata fatta
+  const cl: Decision = { id: "cl", name: "cl", status: "aperta", imp: 1, descr: "Offerta di lavoro", model: { criteria: [{ id: "p", name: "P", w: 0, imp: 3, kind: "g" }], constraints: [],
+    options: [{ id: "a", name: "Accetto", s: { p: 75 } }, { id: "b", name: "Resto fermo", kd: "sq", s: { p: 25 } }] } };
+  cl.model.closed = { at: "2026-10-11", hash: E.closedHash(cl) };
+  assert.equal(E.falseDilemma(cl), null);
+  cl.model.options[0].name = "Accetto l'offerta di Milano";   // la strada principale cambia
+  const stl = E.falseDilemma(cl)!;
+  assert.ok(stl && stl.stale && stl.msg.startsWith("Hai modificato la decisione"), JSON.stringify(stl));
+  cl.model.options[0].name = "Accetto";
+  assert.equal(E.falseDilemma(cl), null);   // tornato al contesto di allora: la dichiarazione vale di nuovo
+  cl.descr = "Offerta di lavoro, e ora c'è anche un'offerta a Milano";
+  assert.ok(E.falseDilemma(cl)?.stale);
+  // vecchie dichiarazioni senza impronta restano valide (compatibilità)
+  delete cl.model.closed.hash; assert.equal(E.falseDilemma(cl), null);
   console.log("engine: capitale a rischio, stati verifica/scelta, chiusura delle strade ok");
 }

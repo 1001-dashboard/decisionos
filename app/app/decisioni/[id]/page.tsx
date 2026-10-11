@@ -10,7 +10,7 @@ import { useWs } from "@/components/Workspace";
 import { ScoreBars } from "@/components/charts";
 import {
   analyzeDecision, applyCombo, combos, eur, fmt, normalize, turningPoints, uid, weightsFromImp, scaleNum, levelOf,
-  tradeoff, solidity, crossEffects, hashOf, biasChecks, conclusive, infoValue, readiness, focus, stopText, fallbackText, oddScenario, invertedScenario, isStatusQuo, contiDelta, saldo, syncConti, isOut, revOf, OPT_ST, type OptState, type Line, riskViews, riskSummary, customRes,
+  tradeoff, solidity, crossEffects, hashOf, biasChecks, conclusive, infoValue, readiness, focus, stopText, fallbackText, oddScenario, invertedScenario, isStatusQuo, contiDelta, saldo, syncConti, isOut, revOf, closedHash, OPT_ST, type OptState, type Line, riskViews, riskSummary, customRes,
   type Resources, type Rule, type Risk,
   areasOf, phasesOf, snapPhase, PHASE_SETS, PLAN_L, PLAN_D, type Area, type Horizon, type Cond, type Dilemma as DilemmaT, type PlanKind, type Phase,
   LEVELS, type Crit, type Decision, type Impact, type Model, type Opt, type Rel, untestedText } from "@/lib/engine";
@@ -99,7 +99,7 @@ function Dilemma({ d, add, drop, close }: { d: DilemmaT; add: (kd: PlanKind, nam
           </div>
         ))}
       </div>
-      <button className="btn ghost sm" style={{ alignSelf: "flex-start" }} onClick={() => confirm("Confermi che non esistono altre strade realisticamente perseguibili? Lo trovi scritto nel report.") && close()}>Non esistono altre strade realisticamente perseguibili</button>
+      <button className="btn ghost sm" style={{ alignSelf: "flex-start" }} onClick={() => confirm("Confermi che non esistono altre strade realisticamente perseguibili? Lo trovi scritto nel report. Se cambi racconto o strade, ti verrà chiesto di confermarlo di nuovo.") && close()}>{d.stale ? "Confermo: non esistono altre strade perseguibili" : "Non esistono altre strade realisticamente perseguibili"}</button>
     </div>
   );
 }
@@ -287,6 +287,15 @@ export default function DecisionPage() {
   const [more, setMore] = useState(false);
   const [notes, setNotes] = useState<Record<string, boolean>>({});
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // modifica in attesa di salvataggio: se lasci la pagina prima dei 600 ms, la salviamo subito (niente modifiche perse)
+  const pending = useRef<Decision | null>(null);
+  const saveRef = useRef(ws.saveDecision);
+  saveRef.current = ws.saveDecision;
+  useEffect(() => {
+    const flush = () => { if (pending.current) { clearTimeout(timer.current); const p = pending.current; pending.current = null; saveRef.current(p); } };
+    window.addEventListener("beforeunload", flush);
+    return () => { window.removeEventListener("beforeunload", flush); flush(); };
+  }, []);
 
   useEffect(() => { if (src && !d) setD(src); }, [src, d]);
   const st = useMemo(() => (d ? status(d) : null), [d]);
@@ -322,8 +331,9 @@ export default function DecisionPage() {
 
   function upd(next: Decision) {
     setD(next); setSaved(false);
+    pending.current = next;
     clearTimeout(timer.current);
-    timer.current = setTimeout(async () => { await ws.saveDecision(next); setSaved(true); }, 600);
+    timer.current = setTimeout(async () => { pending.current = null; await ws.saveDecision(next); setSaved(true); }, 600);
   }
   const setM = (fn: (m: Model) => void) => { const mm = structuredClone(d.model); fn(mm); upd({ ...d, model: mm }); };
   const opt = (mm: Model, oid: string) => mm.options.find((o) => o.id === oid)!;
@@ -471,7 +481,7 @@ export default function DecisionPage() {
       setAdattaMsg(`Adattata: ${a.v - b.v} importi, ${a.c - b.c} condizioni, ${a.r - b.r} rischi, ${a.t - b.t} conseguenze in più. Controlla le voci marcate AI.`);
     } catch (e) { setAiErr((e as Error).message); } finally { setAiBusy(false); }
   }
-  const closePaths = () => setM((mm) => { mm.closed = { at: new Date().toISOString() }; });
+  const closePaths = () => setM((mm) => { mm.closed = { at: new Date().toISOString(), hash: closedHash({ ...d!, model: mm }) }; });
   function dropPlan(kd: PlanKind, name: string, why: string) {
     setM((mm) => { mm.options.push({ id: uid(), name, kd, s: {}, st: "np", stAt: new Date().toISOString(), ...(why.trim() ? { stWhy: why.trim() } : {}) }); });
   }
@@ -600,7 +610,7 @@ export default function DecisionPage() {
             </div>
           )}
           {dilemma && <Dilemma d={dilemma} add={addPlan} drop={dropPlan} close={closePaths} />}
-          {m.closed && <div className="note row between" style={{ fontSize: 14 }}><span>Hai dichiarato il {new Date(m.closed.at).toLocaleDateString("it-IT")} che non esistono altre strade realisticamente perseguibili.</span><button className="btn ghost sm" onClick={() => setM((mm) => { delete mm.closed; })}>Riapri</button></div>}
+          {m.closed && !dilemma?.stale && <div className="note row between" style={{ fontSize: 14 }}><span>Hai dichiarato il {new Date(m.closed.at).toLocaleDateString("it-IT")} che non esistono altre strade realisticamente perseguibili.</span><button className="btn ghost sm" onClick={() => setM((mm) => { delete mm.closed; })}>Riapri</button></div>}
           {((m.scartate ?? []).length > 0 || m.options.some(isOut)) && (
             <div className="note" style={{ fontSize: 14 }}>
               <b>Strade considerate e scartate:</b>
@@ -629,7 +639,7 @@ export default function DecisionPage() {
                   <select aria-label="Stato della strada" className="stsel" value={o.st ?? "attiva"} onChange={(e) => {
                     const v = e.target.value as OptState;
                     // «Scelta» non è un'etichetta: si registra nel Registro (con cosa ti aspetti e quando verificarlo)
-                    if (v === "scelta") { router.push(`/app/registro?d=${d.id}&o=${encodeURIComponent(o.name)}`); return; }
+                    if (v === "scelta") { if (isOut(o)) { alert("Questa strada è non perseguibile o abbandonata: prima riattivala, poi potrai sceglierla."); return; } router.push(`/app/registro?d=${d.id}&o=${encodeURIComponent(o.name)}`); return; }
                     setM((mm) => { const x = opt(mm, o.id); x.st = v; x.stAt = new Date().toISOString(); if (!isOut(x)) delete x.stWhy; });
                   }}>
                     {(Object.keys(OPT_ST) as OptState[]).map((k) => <option key={k} value={k}>{k === "scelta" && o.st !== "scelta" ? "Scelta… (registra)" : OPT_ST[k]}</option>)}

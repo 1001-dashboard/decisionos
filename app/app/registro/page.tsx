@@ -5,7 +5,7 @@ import { Snowflake, CheckCircle2, Trash2, GitCompare, Bot } from "lucide-react";
 import { useWs, type Snapshot, type Outcome } from "@/components/Workspace";
 import { Top } from "@/components/Shell";
 import { ai } from "@/lib/ai";
-import { analyzeDecision, fmt, type DecResult } from "@/lib/engine";
+import { analyzeDecision, fmt, isOut, type DecResult } from "@/lib/engine";
 
 const CAUSE: Record<string, string> = { ragionamento: "Errore di ragionamento", dato: "Dato sbagliato", imprevisto: "Evento imprevedibile", nessuno: "Previsione corretta" };
 
@@ -102,8 +102,9 @@ function Inner() {
               <>
                 <select value={f.chosen} onChange={(e) => setF({ ...f, chosen: e.target.value })}>
                   <option value="">Alternativa scelta…</option>
-                  {dec.model.options.map((o) => <option key={o.id} value={o.name}>{o.name}{o.id === top?.id ? " (prima nel modello)" : ""}</option>)}
+                  {dec.model.options.filter((o) => !isOut(o)).map((o) => <option key={o.id} value={o.name}>{o.name}{o.id === top?.id ? " (prima nel modello)" : ""}</option>)}
                 </select>
+                {dec.model.options.some(isOut) && <small className="muted">Le strade non perseguibili o abbandonate non sono selezionabili: per sceglierne una, prima riattivala nella decisione.</small>}
                 {f.chosen && top && f.chosen !== top.name && <div className="note warn">Hai scelto un&apos;alternativa diversa dalla prima del modello. Annota nel previsto il motivo: in revisione capirai se il modello sbagliava o mancava un criterio.</div>}
                 <textarea placeholder="Cosa ti aspetti che succeda (cifre, tempi)" value={f.expected} onChange={(e) => setF({ ...f, expected: e.target.value })} />
                 <div><label className="f">Data di revisione</label><input type="date" value={f.review_at} onChange={(e) => setF({ ...f, review_at: e.target.value })} /></div>

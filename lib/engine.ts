@@ -92,7 +92,7 @@ export type Model = {
   /** il tuo bilancio di oggi, al mese: punto di partenza dei conti di ogni strada */
   oggi?: Line[];
   /** hai dichiarato: «non esistono altre strade realisticamente perseguibili» */
-  closed?: { at: string; why?: string };
+  closed?: { at: string; why?: string; hash?: string };
   /** costo del non decidere: € al mese che perdi aspettando, e cosa succede */
   wait?: { m?: number | null; t?: string };
   /** valore dell'informazione: per ogni dato che può ribaltare la scelta, quanto costa saperlo */
@@ -731,7 +731,9 @@ export function focus(dec: Decision, r: DecResult, turns: Turn[] = [], info?: In
 }
 
 /* ---------- Strade mancanti: falso dilemma ---------- */
-export type Dilemma = { msg: string; sugg: { kd: PlanKind; name: string; why: string }[] };
+export type Dilemma = { msg: string; sugg: { kd: PlanKind; name: string; why: string }[]; stale?: boolean };
+/** Impronta del contesto su cui hai dichiarato chiuso lo spazio delle alternative: racconto + strade attive (nome e tipo). */
+export const closedHash = (dec: Decision) => hashOf({ t: (dec.descr ?? "").trim(), o: dec.model.options.filter((o) => !isOut(o)).map((o) => `${norm2(o.name)}|${o.kd ?? "base"}`).sort() });
 const SQ = /\b(resto|rest[ao] (dove|com)|rifiut|lascio|lasciare|com'è|com’è|fermo|non (faccio|accetto|cambio)|niente|rimango|status quo)/i;
 export const isStatusQuo = (o: Opt) => o.kd === "sq" || SQ.test(o.name);
 const norm2 = (s: string) => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -754,11 +756,16 @@ export function falseDilemma(dec: Decision): Dilemma | null {
   for (const c of cand) if (!has(c.kd, c.name)) sugg.push(c);
   const binary = opts.length <= 2;
   // resta visibile finché c'è anche una sola strada plausibile non considerata, oppure finché non dichiari che non ce ne sono altre
-  if (dec.model.closed || !(binary || sq) || !sugg.length) return null;
+  // la dichiarazione vale solo per il contesto in cui l'hai fatta: se racconto o strade cambiano, decade
+  const cl = dec.model.closed;
+  const stale = !!cl?.hash && cl.hash !== closedHash(dec);
+  if ((cl && !stale) || !(binary || sq) || !sugg.length) return null;
   const msg = sq && binary
     ? `Stai confrontando «${L}» con il restare dove sei: quasi sempre è un falso dilemma. Le scelte reali hanno strade intermedie, che spesso sono le migliori.`
     : binary ? "Ci sono solo due strade: probabilmente ne mancano." : "Manca almeno una strada intermedia tra sì e no.";
-  return { msg, sugg };
+  return stale
+    ? { msg: `Hai modificato la decisione da quando avevi dichiarato chiuso lo spazio delle alternative (${new Date(cl!.at).toLocaleDateString("it-IT")}): conferma che non esistono nuove strade perseguibili. ${msg}`, sugg, stale }
+    : { msg, sugg };
 }
 
 /* ---------- Decisione condizionata ---------- */
