@@ -26,7 +26,7 @@ export default function Scenari() {
         ))}
         {!open.length && <small>Nessuna decisione aperta.</small>}
       </div>
-      <div className="card"><ScenarioPanel key={sel.join()} decs={pool} deps={deps} resources={profile.resources} rules={profile.rules} h0={profile.horizon} /></div>
+      <div className="card"><ScenarioPanel key={sel.join()} decs={pool} deps={deps} resources={profile.resources} rules={profile.rules} h0={profile.horizon} meta={profile.resources_meta} /></div>
 
       {ok.length ? (
         <div className="card stack" style={{ marginTop: 16 }}>

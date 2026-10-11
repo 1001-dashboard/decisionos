@@ -5,7 +5,7 @@ import { useWs } from "@/components/Workspace";
 import { useAnalysis } from "@/components/useAnalysis";
 import { Top } from "@/components/Shell";
 import { ai } from "@/lib/ai";
-import { eur, fmt, uid, RES_LABEL, SCEN, type Dep } from "@/lib/engine";
+import { customRes, eur, fmt, resLabel, uid, RES_LABEL, SCEN, type Dep } from "@/lib/engine";
 
 type Kind = "excl" | "req" | "and";
 const KL: Record<Kind, string> = { excl: "è incompatibile con", req: "richiede", and: "insieme a (effetto extra)" };
@@ -80,7 +80,7 @@ export default function Connessioni() {
               {k === "and" && (d.impacts ?? []).map((im, i) => (
                 <div key={i} className="row">
                   <span className="muted">effetto</span>
-                  <select style={{ width: "auto" }} value={im.r} onChange={(x) => { const n = structuredClone(d); n.impacts![i].r = x.target.value; saveDep(n); }}>{["cash0", "cash_m", "hours_w"].map((r) => <option key={r} value={r}>{RES_LABEL[r]}</option>)}</select>
+                  <select style={{ width: "auto" }} value={im.r} onChange={(x) => { const n = structuredClone(d); n.impacts![i].r = x.target.value; saveDep(n); }}>{["cash0", "cash_m", "hours_w", ...customRes(profile.resources, profile.resources_meta)].map((r) => <option key={r} value={r}>{resLabel(r, profile.resources_meta)}</option>)}</select>
                   <input className="n" type="number" defaultValue={Array.isArray(im.v) ? im.v[1] : im.v} onBlur={(x) => { const n = structuredClone(d); n.impacts![i].v = +x.target.value; saveDep(n); }} />
                 </div>
               ))}

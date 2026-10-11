@@ -12,8 +12,34 @@ export type Constraint = { id: string; name: string; crit: string; min?: number 
 export type Impact = { r: string; v: number | [number, number, number]; tag?: string; src?: "ai" | "user" };
 export type Meta = { why?: string; rel?: Rel; src?: string; dt?: string };
 /** Una tappa di «cosa succede dopo» se scegli questa strada. h = mesi (1 = entro 30 giorni). */
-export type Area = "soldi" | "tempo" | "famiglia" | "lavoro" | "casa" | "progetti" | "rischi";
+/** Area di una conseguenza: libera, proposta per tipo di scelta (soldi, clienti, salute…). */
+export type Area = string;
 export const AREAS: Area[] = ["soldi", "tempo", "famiglia", "lavoro", "casa", "progetti", "rischi"];
+/** Aree predefinite per tipo di scelta: il dominio è un input, non è scritto nel motore. */
+export const AREA_SETS: Record<string, Area[]> = {
+  persona: ["soldi", "tempo", "famiglia", "lavoro", "casa", "benessere", "rischi"],
+  impresa: ["soldi", "tempo", "clienti", "qualità", "team", "operatività", "reputazione", "rischi"],
+  denaro: ["soldi", "sicurezza", "flessibilità", "tempo", "rischi"],
+  valori: ["relazioni", "coerenza", "benessere", "reputazione", "rischi"],
+  crescita: ["soldi", "tempo", "carriera", "benessere", "vita privata", "rischi"],
+  generale: ["soldi", "tempo", "persone", "lavoro", "benessere", "rischi"],
+};
+const TIPO_AREAS: Record<string, string> = { lavoro: "persona", casa: "persona", famiglia: "persona", salute: "persona", progetto: "impresa", acquisto: "impresa", fornitore: "impresa", persona: "impresa", soldi: "denaro", auto: "denaro", relazioni: "valori", morale: "valori", studio: "crescita" };
+export const areasOf = (m: Pick<Model, "areas" | "tipo">): Area[] => (m.areas?.length ? m.areas : AREA_SETS[TIPO_AREAS[m.tipo ?? ""] ?? "generale"]);
+
+/** Orizzonti temporali: h = mesi dall'inizio (0 = subito), l = etichetta. Preset per tipo di scelta, modificabili. */
+export type Horizon = { h: number; l: string };
+export const PHASE_SETS: Record<string, { l: string; ph: Horizon[] }> = {
+  mesi: { l: "30 giorni → 12 mesi", ph: [{ h: 1, l: "Entro 30 giorni" }, { h: 3, l: "Entro 3 mesi" }, { h: 6, l: "Entro 6 mesi" }, { h: 12, l: "Entro 12 mesi" }] },
+  anni: { l: "Oggi → 5 anni", ph: [{ h: 0, l: "Subito" }, { h: 12, l: "Dopo 1 anno" }, { h: 36, l: "Dopo 3 anni" }, { h: 60, l: "Dopo 5 anni" }] },
+  contratto: { l: "Prima della firma → 12 mesi", ph: [{ h: 0, l: "Prima della firma" }, { h: 0.5, l: "Prime 2 settimane" }, { h: 3, l: "Entro 90 giorni" }, { h: 12, l: "Entro 12 mesi" }] },
+  breve: { l: "Subito → 1 anno", ph: [{ h: 0, l: "Subito" }, { h: 0.25, l: "Tra una settimana" }, { h: 3, l: "Tra 3 mesi" }, { h: 12, l: "Tra un anno" }] },
+};
+const TIPO_PH: Record<string, string> = { lavoro: "mesi", studio: "mesi", famiglia: "mesi", salute: "mesi", casa: "anni", soldi: "anni", auto: "anni", acquisto: "contratto", fornitore: "contratto", persona: "contratto", progetto: "mesi", relazioni: "breve", morale: "breve" };
+export const phasesOf = (m: Pick<Model, "phases" | "tipo">): Horizon[] => (m.phases?.length ? [...m.phases].sort((a, b) => a.h - b.h) : PHASE_SETS[TIPO_PH[m.tipo ?? ""] ?? "mesi"].ph);
+/** Etichetta della fase più vicina (le tappe salvate con un orizzonte diverso si agganciano alla più vicina). */
+export const snapPhase = (ph: Horizon[], h: number) => ph.reduce((a, b) => (Math.abs(b.h - h) < Math.abs(a.h - h) ? b : a), ph[0]);
+// compatibilità con il codice che usa gli orizzonti fissi
 export const PHASES = [1, 3, 6, 12] as const;
 export const PHASE_L: Record<number, string> = { 1: "Entro 30 giorni", 3: "Entro 3 mesi", 6: "Entro 6 mesi", 12: "Entro 12 mesi" };
 export type Phase = { h: number; a?: Area; t: string; src?: "ai" | "user" };
@@ -25,8 +51,10 @@ export type RiskP = "bassa" | "media" | "alta";
 export type Risk = { id: string; t: string; p: RiskP; c?: number | null; m?: number | null; d?: number | null; x?: string; src?: "ai" | "user" };
 /** Pesi convenzionali, dichiarati: servono a ordinare i rischi, non sono probabilità misurate. */
 export const RISK_W: Record<RiskP, number> = { bassa: 0.1, media: 0.3, alta: 0.6 };
-export type PlanKind = "base" | "cond" | "prova" | "cerca";
-export const PLAN_L: Record<PlanKind, string> = { base: "Strada principale", cond: "Solo a condizioni", prova: "Prova con uscita", cerca: "Cerco altro" };
+/** Strategia della strada: generale, non legata a un dominio. */
+export type PlanKind = "base" | "cond" | "prova" | "temp" | "rinvio" | "cerca" | "sq";
+export const PLAN_L: Record<PlanKind, string> = { base: "Diretta", cond: "Condizionata", prova: "Sperimentale / pilota", temp: "Temporanea", rinvio: "Rinviata", cerca: "Alternativa", sq: "Status quo" };
+export const PLAN_D: Record<PlanKind, string> = { base: "la scelta così com'è", cond: "solo se certe condizioni sono garantite", prova: "in piccolo o in prova, con verifica e uscita", temp: "per un periodo definito, poi si rivede", rinvio: "più avanti, quando arrivano informazioni", cerca: "un'altra opzione al posto di questa", sq: "lasciare le cose come stanno" };
 export type Opt = {
   id: string; name: string; note?: string;
   kd?: PlanKind;
@@ -46,6 +74,8 @@ export type AiNote = { p: string[]; c?: string; at: string; h: string };
 export type Model = {
   criteria: Crit[]; constraints: Constraint[]; options: Opt[]; assumptions?: Assumption[];
   ai?: { contro?: AiNote; strade?: { at: string; h: string; x?: string } };
+  phases?: Horizon[];   // orizzonti di questa decisione (se assenti: preset per tipo)
+  areas?: Area[];       // aree delle conseguenze (se assenti: preset per tipo)
   tipo?: string;   // tipo di scelta riconosciuto (lavoro, casa, morale…)
   nota?: string;   // cosa conta poco in questa scelta, secondo l'Analista
 };
@@ -73,6 +103,11 @@ export const RES_LABEL: Record<string, string> = {
 };
 
 const v = (x: Impact["v"], k: number) => (Array.isArray(x) ? x[k] : x);
+
+/** Risorse definite dall'utente: chiavi «x_…» con nome e unità nei metadati del profilo. */
+export type ResMeta = Record<string, { l?: string; u?: string }>;
+export const customRes = (base: Resources, meta: ResMeta = {}) => Object.keys({ ...base, ...meta }).filter((k) => k.startsWith("x_") && meta[k]?.l);
+export const resLabel = (k: string, meta: ResMeta = {}) => RES_LABEL[k] ?? (meta[k]?.l ? `${meta[k].l}${meta[k].u ? ` (${meta[k].u})` : ""}` : k);
 
 export const LEVELS = ["Pessimo", "Scarso", "Medio", "Buono", "Ottimo"] as const;
 export const levelOf = (s: number) => Math.max(0, Math.min(4, Math.round(s / 25)));
@@ -674,18 +709,18 @@ export function focus(dec: Decision, r: DecResult, turns: Turn[] = [], info?: In
 /* ---------- Strade mancanti: falso dilemma ---------- */
 export type Dilemma = { msg: string; sugg: { kd: PlanKind; name: string; why: string }[] };
 const SQ = /\b(resto|rest[ao] (dove|com)|rifiut|lascio|lasciare|com'è|com’è|fermo|non (faccio|accetto|cambio)|niente|rimango|status quo)/i;
-export const isStatusQuo = (o: Opt) => SQ.test(o.name);
+export const isStatusQuo = (o: Opt) => o.kd === "sq" || SQ.test(o.name);
 
 export function falseDilemma(dec: Decision): Dilemma | null {
   const opts = dec.model.options;
   if (!opts.length) return null;
-  const has = (k: PlanKind) => opts.some((o) => o.kd === k);
+  const has = (k: PlanKind) => opts.some((o) => o.kd === k || (k === "prova" && o.kd === "temp") || (k === "cerca" && o.kd === "rinvio"));
   const sq = opts.some(isStatusQuo);
   const L = (opts.find((o) => !isStatusQuo(o) && (!o.kd || o.kd === "base")) ?? opts[0]).name;
   const sugg: Dilemma["sugg"] = [];
   if (!has("cond")) sugg.push({ kd: "cond", name: `${L}, solo a condizioni`, why: "Dici sì solo se le condizioni chiave (soldi, casa, tempi) sono garantite, meglio per iscritto." });
-  if (!has("prova")) sugg.push({ kd: "prova", name: `${L} in prova, con verifica e uscita`, why: "Provi per un periodo definito, con una data di verifica e un modo concreto per tornare indietro." });
-  if (!has("cerca") && sq) sugg.push({ kd: "cerca", name: "Non ora: cerco attivamente un'alternativa", why: "Restare fermo diventa una strada attiva: ricerca mirata, con una scadenza." });
+  if (!has("prova")) sugg.push({ kd: "prova", name: `${L} in prova o in piccolo, con verifica e uscita`, why: "Provi per un periodo o su scala ridotta (prova, pilota, test), con una data di verifica e un modo concreto per tornare indietro." });
+  if (!has("cerca") && sq) sugg.push({ kd: "cerca", name: "Non ora: cerco attivamente un'alternativa", why: "Restare fermo diventa una strada attiva: cerchi un'altra opzione, con una scadenza." });
   const binary = opts.length <= 2;
   if (!(binary || sq) || sugg.length < 2) return null;
   const msg = sq && binary
@@ -740,7 +775,7 @@ export function readiness(dec: Decision, r: DecResult, base: Resources = {}, rul
         : i.cut && (i.cut.highId === L.id || i.cut.lowId === L.id)
         ? `«${i.critName}» di ${i.optName} ${i.cut.highId === L.id ? i.cut.high : i.cut.low}${i.cur ? ` (oggi stimato ${i.cur})` : " (oggi manca)"}`
         : `«${i.critName}» di ${i.optName}: ${i.text}`, how: i.kind === "manca" ? `Trova il valore di «${i.critName}» per ${i.optName}` : `Verifica «${i.critName}» di ${i.optName} (oggi stimato ${i.cur})`, gate: false, kind: "dato", optId: i.opt });
-  if (base.cash0 != null || base.cash_m != null) {
+  if (rules.length) {
     const map = new Map(dec.model.options.map((x) => [x.id, x] as const));
     const sf = applyCombo([L.id], map, [], base, rules, 12, 0);
     if (sf.viol.length) open.push({ key: "liq", t: `Se va male, entro 12 mesi superi i tuoi limiti (${sf.viol.join("; ")}): perché la strada regga serve un cuscinetto o una garanzia`, how: "Prevedi un cuscinetto o una garanzia: anticipo, alloggio pagato, contratto più lungo, data di uscita", gate: false, kind: "liquidita", grp: "cond", optId: L.id });

@@ -419,3 +419,11 @@ details.deep > summary { cursor: pointer; font-weight: 600; color: var(--navy); 
 .brief ul.clean li { font-size: 14px; }
 .grid.briefs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 760px) { .grid.briefs { grid-template-columns: 1fr; } }
+
+.hzbox { padding: 12px 14px; }
+.hzl input { flex: 1 1 120px; min-width: 0; font-size: 13px; }
+.xbtn { border: 0; background: transparent; cursor: pointer; font-weight: 700; color: inherit; padding: 0 0 0 4px; }
+.areain { width: auto; flex: 0 1 220px; font-size: 13px; padding: 5px 8px; }
+.pill.area.benessere, .pill.area.salute { background: #e8f6ee; color: #1f7a52; } .pill.area.clienti { background: #eef0ff; color: #3b45a1; }
+.pill.area.qualità, .pill.area.reputazione { background: #f6efff; color: #6a3fa3; } .pill.area.team, .pill.area.relazioni { background: #fde8ef; color: #9b2c55; }
+.pill.area.operatività, .pill.area.carriera { background: var(--teal-l); color: var(--teal-d); } .pill.area.sicurezza, .pill.area.flessibilità { background: #fff1dc; color: #8a5410; }

@@ -7,7 +7,7 @@ import { useWs } from "@/components/Workspace";
 import { ScoreBars, LineChart, Legend, PAL } from "@/components/charts";
 import {
   analyzeDecision, biasChecks, conclusive, cashBreakpoint, cashSeries, crossEffects, eur, fmt, hashOf, normalize, solidity, tradeoff, turningPoints,
-  LEVELS, SCEN, type Scen, untestedText, infoValue, readiness, focus, stopText, fallbackText, oddScenario, riskViews, riskSummary, PHASES, PHASE_L, PLAN_L } from "@/lib/engine";
+  LEVELS, SCEN, type Scen, untestedText, infoValue, readiness, focus, stopText, fallbackText, oddScenario, riskViews, riskSummary, phasesOf, snapPhase, customRes, PLAN_L } from "@/lib/engine";
 import { actionPlan, briefing, consequences, projection, valueText, HZ } from "@/lib/narrative";
 import { compact } from "@/lib/ai";
 import { PRI } from "@/lib/priorities";
@@ -16,7 +16,7 @@ import { BP } from "@/lib/bp";
 const TONE = { ok: <CheckCircle2 size={15} />, warn: <AlertTriangle size={15} />, bad: <XCircle size={15} /> };
 const SL: Record<Scen, string> = { sfavorevole: "Se va male", centrale: "Probabile", favorevole: "Se va bene" };
 const REL: Record<string, string> = { F: "certo", D: "dichiarato", S: "stima" };
-const TIPO: Record<string, string> = { lavoro: "Lavoro", casa: "Casa", acquisto: "Acquisto", soldi: "Soldi", progetto: "Progetto", relazioni: "Relazioni", famiglia: "Famiglia", salute: "Salute", studio: "Studio", morale: "Scelta morale", altro: "Altro" };
+const TIPO: Record<string, string> = { lavoro: "Lavoro", casa: "Casa", acquisto: "Acquisto", soldi: "Soldi", progetto: "Progetto", relazioni: "Relazioni", famiglia: "Famiglia", salute: "Salute", studio: "Studio", morale: "Scelta morale", fornitore: "Fornitore", persona: "Assunzione", auto: "Auto o mezzo", altro: "Altro" };
 
 export default function Report() {
   const { id } = useParams<{ id: string }>();
@@ -140,6 +140,7 @@ export default function Report() {
                 <li>Risparmi disponibili: <b>{eur(R.cash0 ?? 0)}</b></li>
                 <li>Margine mensile attuale: <b>{eur(R.cash_m ?? 0)}</b></li>
                 <li>Ore libere a settimana: <b>{fmt(R.hours_w ?? 0)}</b></li>
+                {customRes(R, ws.profile.resources_meta).map((k) => <li key={k}>{ws.profile.resources_meta[k]?.l}: <b>{fmt(R[k] ?? 0)}{ws.profile.resources_meta[k]?.u ? ` ${ws.profile.resources_meta[k]?.u}` : ""}</b></li>)}
                 {rules.map((r) => <li key={r.id}>Limite: {r.name}{r.min != null ? ` ≥ ${fmt(r.min)}` : ""}{r.max != null ? ` ≤ ${fmt(r.max)}` : ""}</li>)}
               </ul>
             </div>
@@ -174,9 +175,8 @@ export default function Report() {
               )}
               {(o.tl ?? []).length > 0 && (
                 <div className="rep-tl">
-                  {PHASES.map((h) => (
-                    <div key={h}><b>{PHASE_L[h]}</b><ul>{(o.tl ?? []).filter((x) => x.h === h).map((x, k) => <li key={k}>{x.t}{x.src === "ai" ? <span className="aitag">AI</span> : null}</li>)}{!(o.tl ?? []).some((x) => x.h === h) && <li className="muted">—</li>}</ul></div>
-                  ))}
+                  {phasesOf(m).map((ph) => { const its = (o.tl ?? []).filter((x) => snapPhase(phasesOf(m), x.h).h === ph.h); return (
+                    <div key={ph.h}><b>{ph.l}</b><ul>{its.map((x, k) => <li key={k}>{x.t}{x.src === "ai" ? <span className="aitag">AI</span> : null}</li>)}{!its.length && <li className="muted">—</li>}</ul></div>); })}
                 </div>
               )}
               <div className="rep-grid2">

@@ -10,9 +10,9 @@ import { useWs } from "@/components/Workspace";
 import { ScoreBars } from "@/components/charts";
 import {
   analyzeDecision, applyCombo, combos, eur, fmt, normalize, turningPoints, uid, weightsFromImp, scaleNum, levelOf,
-  tradeoff, solidity, crossEffects, hashOf, biasChecks, conclusive, infoValue, readiness, focus, stopText, fallbackText, oddScenario, isStatusQuo, riskViews, riskSummary,
+  tradeoff, solidity, crossEffects, hashOf, biasChecks, conclusive, infoValue, readiness, focus, stopText, fallbackText, oddScenario, isStatusQuo, riskViews, riskSummary, customRes,
   type Resources, type Rule, type Risk,
-  AREAS, PHASES, PHASE_L, PLAN_L, type Area, type Cond, type Dilemma as DilemmaT, type PlanKind, type Phase,
+  areasOf, phasesOf, snapPhase, PHASE_SETS, PLAN_L, PLAN_D, type Area, type Horizon, type Cond, type Dilemma as DilemmaT, type PlanKind, type Phase,
   LEVELS, type Crit, type Decision, type Impact, type Model, type Opt, type Rel, untestedText } from "@/lib/engine";
 import { CRIT_LIB } from "@/lib/templates";
 import { briefing } from "@/lib/narrative";
@@ -25,7 +25,7 @@ const UNITS = ["€/mese", "€", "€/anno", "ore/settimana", "minuti", "km", "
 
 const OPC = ["#15406a", "#13879a", "#e49b2f", "#7a5bbf", "#3f8f5b"];
 const KDL = PLAN_L;
-const AREA_L: Record<Area, string> = { soldi: "Soldi", tempo: "Tempo", famiglia: "Famiglia", lavoro: "Lavoro", casa: "Casa", progetti: "Progetti", rischi: "Rischi" };
+const areaL = (a: Area) => a.charAt(0).toUpperCase() + a.slice(1);
 const ST_L: Record<Cond["st"], string> = { "?": "Da verificare", si: "Sì", no: "No" };
 
 const STEPS = ["Strade", "Conseguenze", "Cosa conta", "Valuta", "Soldi e tempo", "Decisione"];
@@ -90,15 +90,15 @@ function Dilemma({ d, add }: { d: DilemmaT; add: (kd: PlanKind, name: string) =>
 }
 
 /** Conseguenze nel tempo, decisioni generate e condizioni di una strada. */
-function Conseq({ o, i, setM, onNewDecision, base, rules }: { o: Opt; i: number; setM: (fn: (m: Model) => void) => void; onNewDecision: (name: string) => void; base: Resources; rules: Rule[] }) {
+function Conseq({ o, i, setM, onNewDecision, base, rules, phs, ars }: { o: Opt; i: number; setM: (fn: (m: Model) => void) => void; onNewDecision: (name: string) => void; base: Resources; rules: Rule[]; phs: Horizon[]; ars: Area[] }) {
   const [rt, setRt] = useState("");
   const rv = riskViews(o, base, rules);
   const editR = (rid: string, fn: (r: Risk) => void) => setM((mm) => { const r = mm.options.find((y) => y.id === o.id)!.risks?.find((z) => z.id === rid); if (r) { fn(r); delete r.src; } });
   const addRk = () => { if (!rt.trim()) return; setM((mm) => { const x = mm.options.find((y) => y.id === o.id)!; (x.risks ??= []).push({ id: uid(), t: rt.trim(), p: "media", src: "user" }); }); setRt(""); };
-  const [ph, setPh] = useState(1), [ar, setAr] = useState<Area>("casa"), [tt, setTt] = useState("");
+  const [ph, setPh] = useState(phs[0].h), [ar, setAr] = useState<Area>(ars[0]), [tt, setTt] = useState("");
   const [nx, setNx] = useState(""), [ct, setCt] = useState("");
   const edit = (fn: (x: Opt) => void) => setM((mm) => { fn(mm.options.find((y) => y.id === o.id)!); });
-  const addTl = () => { if (!tt.trim()) return; edit((x) => { (x.tl ??= []).push({ h: ph, a: ar, t: tt.trim(), src: "user" }); }); setTt(""); };
+  const addTl = () => { if (!tt.trim()) return; edit((x) => { (x.tl ??= []).push({ h: ph, a: ars.includes(ar) ? ar : ars[0], t: tt.trim(), src: "user" }); }); setTt(""); };
   const addNx = () => { if (!nx.trim()) return; edit((x) => { (x.next ??= []).push(nx.trim()); }); setNx(""); };
   const addCd = () => { if (!ct.trim()) return; edit((x) => { (x.cond ??= []).push({ id: uid(), t: ct.trim(), st: "?", src: "user" }); }); setCt(""); };
   const tl = o.tl ?? [];
@@ -110,23 +110,23 @@ function Conseq({ o, i, setM, onNewDecision, base, rules }: { o: Opt; i: number;
         {o.kd && o.kd !== "base" && <span className="pill teal">{KDL[o.kd]}</span>}
       </div>
       <div className="tline">
-        {PHASES.map((h) => (
+        {phs.map(({ h, l }) => (
           <div key={h} className="tcol">
-            <b>{PHASE_L[h]}</b>
-            {tl.map((x, k) => ({ x, k })).filter(({ x }) => x.h === h).map(({ x, k }) => (
+            <b>{l}</b>
+            {tl.map((x, k) => ({ x, k })).filter(({ x }) => snapPhase(phs, x.h).h === h).map(({ x, k }) => (
               <div key={k} className="titem">
-                {x.a && <span className={`pill area ${x.a}`}>{AREA_L[x.a]}</span>}
+                {x.a && <span className={`pill area ${x.a}`}>{areaL(x.a)}</span>}
                 <span>{x.t}{x.src === "ai" && <span className="aitag" title="Proposto dall'AI">AI</span>}</span>
                 <button className="iconbtn" aria-label="Togli" onClick={() => edit((y) => { y.tl = (y.tl ?? []).filter((_, j) => j !== k); })}><X size={13} /></button>
               </div>
             ))}
-            {!tl.some((x) => x.h === h) && <small className="muted">—</small>}
+            {!tl.some((x) => snapPhase(phs, x.h).h === h) && <small className="muted">—</small>}
           </div>
         ))}
       </div>
       <div className="row tadd">
-        <select aria-label="Quando" value={ph} onChange={(e) => setPh(+e.target.value)}>{PHASES.map((h) => <option key={h} value={h}>{PHASE_L[h]}</option>)}</select>
-        <select aria-label="Area" value={ar} onChange={(e) => setAr(e.target.value as Area)}>{AREAS.map((a) => <option key={a} value={a}>{AREA_L[a]}</option>)}</select>
+        <select aria-label="Quando" value={ph} onChange={(e) => setPh(+e.target.value)}>{phs.map((x) => <option key={x.h} value={x.h}>{x.l}</option>)}</select>
+        <select aria-label="Area" value={ars.includes(ar) ? ar : ars[0]} onChange={(e) => setAr(e.target.value)}>{ars.map((a) => <option key={a} value={a}>{areaL(a)}</option>)}</select>
         <input placeholder="Cosa succede, concretamente" value={tt} onChange={(e) => setTt(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addTl(); }} />
         <button className="btn sm" onClick={addTl}><Plus size={14} /> Aggiungi</button>
       </div>
@@ -220,6 +220,7 @@ export default function DecisionPage() {
   const bias = useMemo(() => (d && res ? biasChecks(d, res) : []), [d, res]);
   const sol = useMemo(() => (d && res ? solidity(d, res) : null), [d, res]);
   const [crossOpt, setCrossOpt] = useState<string>("");
+  const [newArea, setNewArea] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiErr, setAiErr] = useState("");
   const others = useMemo(() => ws.decisions.filter((x) => x.status === "aperta" && x.id !== id && x.model.options.length), [ws.decisions, id]);
@@ -316,6 +317,16 @@ export default function DecisionPage() {
   }
   const noBase = !(R.cash0 || R.cash_m || R.hours_w);
   const dilemma = ready.dilemma;
+  const phs = phasesOf(m), ars = areasOf(m);
+  const cres = customRes(R, ws.profile.resources_meta);
+  // cambiare orizzonti: le tappe esistenti si agganciano al nuovo orizzonte più vicino (stesso ordine)
+  const setPhases = (np: Horizon[]) => setM((mm) => {
+    const old = phasesOf(mm);
+    const rank = (h: number) => old.findIndex((x) => x.h === snapPhase(old, h).h);
+    mm.options.forEach((o) => (o.tl ?? []).forEach((t) => { const r = rank(t.h); t.h = np[Math.min(np.length - 1, Math.max(0, r))].h; }));
+    mm.phases = np;
+  });
+  const addArea = () => { const a = newArea.trim().toLowerCase(); if (!a) return; setM((mm) => { const cur = areasOf(mm); if (!cur.includes(a)) mm.areas = [...cur, a].slice(0, 10); }); setNewArea(""); };
   const conds = ready.open.filter((c) => c.grp === "cond"), chiar = ready.open.filter((c) => c.grp === "chiarire");
   const rsum = riskSummary(d, R, ws.profile.rules);
   const briefOrder = m.options.map((o) => {
@@ -417,7 +428,7 @@ export default function DecisionPage() {
       {S === 0 && (
         <section className="stack">
           <h2 className="sh">Quali strade hai davanti?</h2>
-          <Hint>Le scelte vere quasi mai sono «sì o no». Oltre alla strada principale pensa a: <b>sì, ma solo a condizioni</b>; <b>una prova a tempo</b> con verifica e uscita; <b>cercare attivamente altro</b> invece di restare fermo. Negoziare non è una strada a parte: è il primo passo del piano, lo trovi alla fine.</Hint>
+          <Hint>Le scelte vere quasi mai sono «sì o no». Oltre alla strada diretta pensa a una strada <b>condizionata</b> (solo se…), <b>sperimentale</b> (in prova, in piccolo, un pilota), <b>temporanea</b>, <b>rinviata</b> (quando avrai più informazioni) o a un&apos;<b>alternativa</b> da cercare. Negoziare non è una strada a parte: è il primo passo del piano, lo trovi alla fine.</Hint>
           {dilemma && <Dilemma d={dilemma} add={addPlan} />}
           <div className="grid g3">
             {m.options.map((o, i) => (
@@ -425,7 +436,7 @@ export default function DecisionPage() {
                 <div className="row between" style={{ flexWrap: "nowrap" }}>
                   <span className="optbadge" style={{ background: OPC[i % OPC.length] }}>{String.fromCharCode(65 + i)}</span>
                   <select className="kdsel" aria-label="Tipo di strada" value={o.kd ?? "base"} onChange={(e) => setM((mm) => { opt(mm, o.id).kd = e.target.value as PlanKind; })}>
-                    {(Object.keys(KDL) as PlanKind[]).map((k) => <option key={k} value={k}>{KDL[k]}</option>)}
+                    {(Object.keys(KDL) as PlanKind[]).map((k) => <option key={k} value={k} title={PLAN_D[k]}>{KDL[k]}</option>)}
                   </select>
                   <button className="iconbtn" title="Elimina" onClick={() => confirm(`Eliminare «${o.name}»?`) && setM((mm) => { mm.options = mm.options.filter((x) => x.id !== o.id); })}><Trash2 size={15} /></button>
                 </div>
@@ -451,10 +462,29 @@ export default function DecisionPage() {
       {S === 1 && (
         <section className="stack">
           <h2 className="sh">Se scegli questa strada, cosa succede dopo?</h2>
-          <Hint>Una scelta non è un punteggio: è una sequenza. Per ogni strada scrivi cosa succede <b>entro 30 giorni, 3, 6 e 12 mesi</b> su casa, famiglia, lavoro, soldi, tempo. Poi <b>cosa deve essere vero</b> perché abbia senso: sono le condizioni che Decision OS userà per dirti se la decisione è pronta.</Hint>
+          <Hint>Una scelta non è un punteggio: è una sequenza. Per ogni strada scrivi cosa succede nel tempo, nelle aree che contano per <b>questa</b> decisione. Poi <b>cosa deve essere vero</b> perché abbia senso e <b>cosa può andare storto</b>: Decision OS li usa per dirti se la decisione è pronta.</Hint>
+          <div className="card stack hzbox">
+            <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "end" }}>
+              <div style={{ flex: "1 1 220px" }}>
+                <label className="f">Orizzonti di questa decisione</label>
+                <select aria-label="Orizzonti" value={Object.keys(PHASE_SETS).find((k) => JSON.stringify(PHASE_SETS[k].ph) === JSON.stringify(phs)) ?? ""} onChange={(e) => setPhases(PHASE_SETS[e.target.value].ph)}>
+                  {!Object.keys(PHASE_SETS).some((k) => JSON.stringify(PHASE_SETS[k].ph) === JSON.stringify(phs)) && <option value="">Personalizzati</option>}
+                  {Object.entries(PHASE_SETS).map(([k, v]) => <option key={k} value={k}>{v.l}</option>)}
+                </select>
+              </div>
+              <div className="row hzl" style={{ flex: "3 1 360px", gap: 6 }}>
+                {phs.map((x, k) => <input key={k} aria-label={`Orizzonte ${k + 1}`} value={x.l} onChange={(e) => setPhases(phs.map((y, j) => (j === k ? { ...y, l: e.target.value } : y)))} />)}
+              </div>
+            </div>
+            <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <small className="muted">Aree:</small>
+              {ars.map((a) => <span key={a} className={`pill area ${a}`}>{areaL(a)} <button className="xbtn" aria-label={`Togli area ${a}`} onClick={() => setM((mm) => { mm.areas = areasOf(mm).filter((z) => z !== a); })}>×</button></span>)}
+              <input className="areain" placeholder="+ area (es. clienti, salute)" value={newArea} onChange={(e) => setNewArea(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addArea(); }} onBlur={addArea} />
+            </div>
+          </div>
           {aiStradeBox}
           <div className="stack">
-            {m.options.map((o, i) => <Conseq key={o.id} o={o} i={i} setM={setM} onNewDecision={newDecision} base={ws.profile.resources} rules={ws.profile.rules} />)}
+            {m.options.map((o, i) => <Conseq key={o.id} o={o} i={i} setM={setM} onNewDecision={newDecision} base={ws.profile.resources} rules={ws.profile.rules} phs={phs} ars={ars} />)}
           </div>
         </section>
       )}
@@ -661,6 +691,12 @@ export default function DecisionPage() {
                     <label className="f">Ore a settimana che richiede in più</label>
                     <Num value={h ? -mid(h.v) : null} suffix="ore" onChange={(v) => setImpact(o.id, "hours_w", v == null ? null : -v)} />
                   </div>
+                  {cres.map((k) => { const im = imp(o, k); const mt = ws.profile.resources_meta[k]; return (
+                    <div key={k}>
+                      <label className="f">Effetto su «{mt?.l}»</label>
+                      <Num value={im ? mid(im.v) : null} suffix={mt?.u || undefined} onChange={(v) => setImpact(o.id, k, v)} />
+                      <small>+ se la aumenta, − se la consuma. Oggi: {fmt(R[k] ?? 0)}{mt?.u ? ` ${mt.u}` : ""}.</small>
+                    </div>); })}
                   {(c0 || cm) && (
                     <div className="note" style={{ fontSize: 13 }}>
                       Tra 12 mesi (scenario probabile): <b>{eur(sim.res.cash_end ?? 0)}</b> di risparmi
@@ -668,6 +704,7 @@ export default function DecisionPage() {
                       {sim.viol.length ? <div className="err">⚠ {sim.viol.join("; ")}</div> : null}
                     </div>
                   )}
+                  {!(c0 || cm) && sim.viol.length > 0 && <div className="err">⚠ {sim.viol.join("; ")}</div>}
                 </div>
               );
             })}

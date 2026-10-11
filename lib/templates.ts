@@ -1,13 +1,14 @@
-import { uid, type Crit, type Model } from "./engine.ts";
+import { uid, type Crit, type Model, type PlanKind } from "./engine.ts";
 
 /** Modelli di partenza: solo struttura (alternative, criteri, dubbi tipici). Nessun valore: li metti tu.
  *  Le scale in denaro restano vuote apposta: pessimo e ottimo dipendono dalla tua situazione. */
 type C = Partial<Crit> & { name: string; kind: "num" | "g" };
-export type Template = { k: string; t: string; d: string; icon: string; alts: string[]; crit: C[]; doubts: string[] };
+/** alts: nome della strada, con la sua strategia (diretta, condizionata, sperimentale, rinviata, alternativa, status quo). */
+export type Template = { k: string; t: string; d: string; icon: string; alts: [string, PlanKind][]; crit: C[]; doubts: string[] };
 
 export const TEMPLATES: Template[] = [
   { k: "lavoro", t: "Offerta di lavoro", d: "Accettare, restare, negoziare", icon: "briefcase",
-    alts: ["Accetto l'offerta", "Resto dove sono", "Negozio condizioni migliori"],
+    alts: [["Accetto l'offerta", "base"], ["Accetto solo a condizioni migliori", "cond"], ["Resto dove sono", "sq"]],
     crit: [
       { name: "Stipendio netto", kind: "num", unit: "€/mese", imp: 4 },
       { name: "Tempo di viaggio", kind: "num", unit: "minuti/giorno", worst: 120, best: 0, imp: 3 },
@@ -17,7 +18,7 @@ export const TEMPLATES: Template[] = [
     ],
     doubts: ["Stipendio netto reale (non lordo)", "Durata e tipo di contratto", "Benefit inclusi"] },
   { k: "casa", t: "Casa", d: "Comprare, affittare, cambiare zona", icon: "home",
-    alts: ["Compro", "Resto in affitto", "Cambio casa in affitto"],
+    alts: [["Compro", "base"], ["Cambio casa in affitto", "cerca"], ["Resto in affitto dove sono", "sq"]],
     crit: [
       { name: "Costo mensile totale", kind: "num", unit: "€/mese", imp: 5 },
       { name: "Soldi da anticipare", kind: "num", unit: "€", imp: 4 },
@@ -27,7 +28,7 @@ export const TEMPLATES: Template[] = [
     ],
     doubts: ["Rata mutuo e tasso reali", "Spese condominiali e manutenzione", "Tempi di vendita/uscita"] },
   { k: "auto", t: "Auto o mezzo", d: "Comprare, noleggiare, tenere", icon: "car",
-    alts: ["Compro", "Noleggio a lungo termine", "Tengo quella attuale"],
+    alts: [["Compro", "base"], ["Noleggio a lungo termine", "cerca"], ["Tengo quella attuale", "sq"]],
     crit: [
       { name: "Costo mensile tutto incluso", kind: "num", unit: "€/mese", imp: 5 },
       { name: "Anticipo", kind: "num", unit: "€", imp: 3 },
@@ -36,7 +37,7 @@ export const TEMPLATES: Template[] = [
     ],
     doubts: ["Km annui reali", "Costo assicurazione", "Valore residuo"] },
   { k: "progetto", t: "Avviare un progetto", d: "Partire, testare in piccolo, rimandare", icon: "rocket",
-    alts: ["Parto ora", "Test in piccolo", "Rimando"],
+    alts: [["Parto ora", "base"], ["Test in piccolo, con verifica", "prova"], ["Rimando", "rinvio"]],
     crit: [
       { name: "Investimento iniziale", kind: "num", unit: "€", imp: 4 },
       { name: "Tempo richiesto", kind: "num", unit: "ore/settimana", worst: 40, best: 5, imp: 4 },
@@ -46,7 +47,7 @@ export const TEMPLATES: Template[] = [
     ],
     doubts: ["Primi clienti disposti a pagare?", "Mesi prima di incassare", "Soci o finanziamenti"] },
   { k: "fornitore", t: "Fornitore o acquisto", d: "Scegliere tra offerte", icon: "package",
-    alts: ["Offerta A", "Offerta B", "Tengo il fornitore attuale"],
+    alts: [["Offerta A", "base"], ["Offerta B", "base"], ["Pilota con il nuovo fornitore", "prova"], ["Tengo il fornitore attuale", "sq"]],
     crit: [
       { name: "Costo annuo", kind: "num", unit: "€/anno", imp: 4 },
       { name: "Qualità", kind: "g", imp: 4 },
@@ -56,7 +57,7 @@ export const TEMPLATES: Template[] = [
     ],
     doubts: ["Penali e durata del contratto", "Referenze di altri clienti"] },
   { k: "persona", t: "Assunzione o collaborazione", d: "Scegliere tra candidati", icon: "users",
-    alts: ["Candidato A", "Candidato B", "Non assumo ora"],
+    alts: [["Candidato A", "base"], ["Candidato B", "base"], ["Periodo di prova o collaborazione", "prova"], ["Non assumo ora", "rinvio"]],
     crit: [
       { name: "Costo annuo", kind: "num", unit: "€/anno", imp: 3 },
       { name: "Competenze", kind: "g", imp: 5 },
@@ -65,7 +66,7 @@ export const TEMPLATES: Template[] = [
     ],
     doubts: ["Referenze verificate", "Disponibilità effettiva"] },
   { k: "studio", t: "Formazione o corso", d: "Iscriversi, scegliere, aspettare", icon: "graduation",
-    alts: ["Corso A", "Corso B", "Aspetto"],
+    alts: [["Corso A", "base"], ["Corso B", "base"], ["Aspetto un anno", "rinvio"]],
     crit: [
       { name: "Costo", kind: "num", unit: "€", imp: 3 },
       { name: "Tempo richiesto", kind: "num", unit: "ore/settimana", worst: 20, best: 2, imp: 4 },
@@ -74,7 +75,7 @@ export const TEMPLATES: Template[] = [
     ],
     doubts: ["Sbocchi reali di chi l'ha fatto", "Possibilità di rimborso o fondi"] },
   { k: "soldi", t: "Uso dei risparmi", d: "Investire, spendere, tenere", icon: "piggy",
-    alts: ["Investo", "Uso per una spesa", "Tengo da parte"],
+    alts: [["Investo", "base"], ["Uso per una spesa", "base"], ["Investo una parte, il resto da parte", "prova"], ["Tengo da parte", "sq"]],
     crit: [
       { name: "Rendimento atteso", kind: "num", unit: "€/anno", imp: 3 },
       { name: "Sicurezza", kind: "g", imp: 5 },
@@ -110,7 +111,8 @@ export function fromTemplate(t: Template): { name: string; model: Model } {
     model: {
       criteria,
       constraints: [],
-      options: t.alts.map((n) => ({ id: uid(), name: n, s: {} })),
+      options: t.alts.map(([n, kd]) => ({ id: uid(), name: n, kd, s: {} })),
+      tipo: t.k,
       assumptions: t.doubts.map((x) => ({ id: uid(), t: x, rel: "?" as const })),
     },
   };

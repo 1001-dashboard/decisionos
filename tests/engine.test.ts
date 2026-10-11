@@ -385,4 +385,56 @@ console.log("engine: 10/10 ok");
   const liq = lqR.open.find((c) => c.kind === "liquidita")!;
   assert.ok(liq && liq.t.startsWith("Se va male, entro 12 mesi superi i tuoi limiti") && !liq.t.includes("non superi") && liq.t.includes("sotto il minimo"), liq?.t);
   console.log("engine: falso dilemma blocca Pronta, frase liquidità corretta ok");
+  // 38. dominio come input: orizzonti e aree per tipo, niente casa/famiglia dove non c'entrano
+  const { TEMPLATES, fromTemplate } = await import("../lib/templates.ts");
+  const want: Record<string, { ph: string; no: string[] }> = {
+    fornitore: { ph: "Prima della firma", no: ["casa", "famiglia"] }, persona: { ph: "Prima della firma", no: ["casa", "famiglia"] },
+    auto: { ph: "Dopo 5 anni", no: ["famiglia", "casa"] }, soldi: { ph: "Dopo 3 anni", no: ["casa", "famiglia"] }, progetto: { ph: "Entro 30 giorni", no: ["casa", "famiglia"] },
+    studio: { ph: "Entro 12 mesi", no: ["casa"] }, lavoro: { ph: "Entro 30 giorni", no: [] }, casa: { ph: "Dopo 1 anno", no: [] },
+  };
+  for (const t of TEMPLATES) {
+    const x = fromTemplate(t);
+    assert.equal(x.model.tipo, t.k);
+    const phl = E.phasesOf(x.model).map((p) => p.l), ar = E.areasOf(x.model);
+    assert.ok(phl.includes(want[t.k].ph), `${t.k}: ${phl}`);
+    for (const n of want[t.k].no) assert.ok(!ar.includes(n), `${t.k} non deve avere l'area ${n}: ${ar}`);
+    assert.ok(x.model.options.every((o) => o.kd), `${t.k}: strategie delle strade`);
+  }
+  assert.ok(E.areasOf({ tipo: "fornitore" }).includes("clienti") && E.areasOf({ tipo: "morale" }).includes("relazioni"));
+  assert.ok(!E.areasOf({}).includes("casa") && !E.areasOf({}).includes("famiglia"));   // decisione senza tipo: aree neutre
+  // 39. cinque decisioni diverse dall'Analista (risposte simulate): orizzonti e aree dalla decisione, strategie pertinenti
+  const { structToModel: sTM } = await import("../lib/ai.ts");
+  const cases: [string, Record<string, unknown>, string, string][] = [
+    ["risparmi", { n: "15.000 €: anticipo auto, liquidità o investo", k: "soldi", a: [{ n: "Anticipo auto", kd: "base" }, { n: "Tengo liquidità", kd: "sq" }, { n: "Investo metà, metà liquida", kd: "prova" }] }, "Dopo 5 anni", "sicurezza"],
+    ["fornitori", { n: "Fornitore servizio", k: "fornitore", ph: [{ h: 0, l: "Prima della firma" }, { h: 0.5, l: "Prime 2 settimane" }, { h: 3, l: "90 giorni" }, { h: 12, l: "12 mesi" }], ar: ["costi", "qualità", "sla", "operatività"],
+      a: [{ n: "Fornitore A", kd: "base", tl: [{ h: 2, a: "sla", t: "SLA in collaudo" }] }, { n: "Pilota con B su una sede", kd: "prova" }, { n: "Tengo l'attuale", kd: "sq" }] }, "Prima della firma", "sla"],
+    ["assunzione", { n: "Senior o due junior", k: "persona", a: [{ n: "Assumo il senior", kd: "base" }, { n: "Due junior", kd: "base" }, { n: "Senior a tempo determinato", kd: "temp" }] }, "Entro 90 giorni", "team"],
+    ["magistrale", { n: "Magistrale mentre lavoro", k: "studio", a: [{ n: "Mi iscrivo ora", kd: "base" }, { n: "Rimando di un anno", kd: "rinvio" }, { n: "Corso breve prima", kd: "prova" }] }, "Entro 6 mesi", "carriera"],
+    ["progetto", { n: "Chiudo o altri 6 mesi", k: "progetto", a: [{ n: "Chiudo ora", kd: "base" }, { n: "Altri 6 mesi con obiettivi", kd: "temp" }, { n: "Riduco e testo un pivot", kd: "prova" }] }, "Entro 30 giorni", "clienti"],
+  ];
+  for (const [nm, raw, ph, ar] of cases) {
+    const st = sTM(raw as never);
+    const phl = E.phasesOf(st.model).map((p) => p.l), ars = E.areasOf(st.model);
+    assert.ok(phl.includes(ph), `${nm}: orizzonti ${phl}`);
+    assert.ok(ars.includes(ar) && !ars.includes("casa") && !ars.includes("famiglia"), `${nm}: aree ${ars}`);
+    assert.ok(new Set(st.model.options.map((o) => o.kd)).size >= 2, `${nm}: strategie diverse`);
+  }
+  const fz = sTM(cases[1][1] as never).model.options[0].tl![0];
+  assert.ok(fz.h === 3 && fz.a === "sla", JSON.stringify(fz));   // tappa agganciata all'orizzonte più vicino della decisione
+  // 40. risorse definite dall'utente: personale disponibile ≥ 4, una strada ne consuma 2
+  const hr: Decision = { id: "h", name: "Assunzioni", status: "aperta", imp: 1, tipo: "persona" as never, model: { tipo: "persona", criteria: [{ id: "p", name: "Competenze", w: 0, imp: 3, kind: "g" }], constraints: [],
+    options: [{ id: "a", name: "Sposto 2 persone sul progetto", kd: "base", s: { p: 100 }, m: { p: { rel: "F" } }, impacts: [{ r: "x_pers", v: -2 }] },
+      { id: "b", name: "Assumo un esterno", kd: "base", s: { p: 50 }, m: { p: { rel: "F" } } }, { id: "c", name: "Pilota con 1 persona", kd: "prova", s: { p: 75 }, m: { p: { rel: "F" } }, impacts: [{ r: "x_pers", v: -1 }] }, { id: "d", name: "Rimando", kd: "rinvio", s: { p: 25 }, m: { p: { rel: "F" } } }] } };
+  const hrR = E.readiness(hr, E.analyzeDecision(hr), { x_pers: 5 }, [{ id: "q", name: "Personale operativo minimo", r: "x_pers", min: 4 }]);
+  const hq = hrR.open.find((c) => c.kind === "liquidita");
+  assert.ok(hq && hq.t.includes("Personale operativo minimo") && hq.t.includes("sotto il minimo di 4"), hq?.t);
+  assert.deepEqual(E.customRes({ x_pers: 5, cash0: 1 }, { x_pers: { l: "Personale", u: "persone" } }), ["x_pers"]);
+  assert.equal(E.resLabel("x_pers", { x_pers: { l: "Personale", u: "persone" } }), "Personale (persone)");
+  // 41. falso dilemma generalizzato: «temporanea» vale come strada intermedia, «status quo» come restare fermi
+  const g2: Decision = { id: "g", name: "g", status: "aperta", imp: 1, model: { criteria: [{ id: "p", name: "P", w: 0, imp: 3, kind: "g" }], constraints: [],
+    options: [{ id: "a", name: "Senior", kd: "base", s: {} }, { id: "b", name: "Nessuno", kd: "sq", s: {} }] } };
+  assert.ok(E.falseDilemma(g2));
+  g2.model.options.push({ id: "c", name: "Senior a tempo", kd: "temp", s: {} }, { id: "d", name: "Senior solo se budget", kd: "cond", s: {} }, { id: "e", name: "Cerco altro profilo", kd: "cerca", s: {} });
+  assert.equal(E.falseDilemma(g2), null);
+  console.log("engine: dominio come input (5 decisioni diverse, risorse tue, strategie) ok");
 }

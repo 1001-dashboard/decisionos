@@ -4,7 +4,7 @@ import { Plus, Wallet, Clock, AlertTriangle, CalendarClock, GitFork, ArrowRight,
 import { useWs } from "@/components/Workspace";
 import { useAnalysis } from "@/components/useAnalysis";
 import { Top } from "@/components/Shell";
-import { eur, fmt, readiness, RES_LABEL } from "@/lib/engine";
+import { eur, fmt, readiness, resLabel, RES_LABEL } from "@/lib/engine";
 import ReportView from "@/components/ReportView";
 
 export default function Dashboard() {
@@ -84,7 +84,7 @@ export default function Dashboard() {
           </div>
           <div className="card stack">
             <h3><ShieldCheck size={18} /> Vincoli sulle risorse</h3>
-            {profile.rules.map((r) => <div key={r.id} className="row between" style={{ fontSize: 14 }}><span>{r.name}</span><span className="muted">{RES_LABEL[r.r] ?? r.r} {r.min != null ? `≥ ${fmt(r.min)}` : ""}{r.max != null ? ` ≤ ${fmt(r.max)}` : ""}</span></div>)}
+            {profile.rules.map((r) => <div key={r.id} className="row between" style={{ fontSize: 14 }}><span>{r.name}</span><span className="muted">{resLabel(r.r, profile.resources_meta)} {r.min != null ? `≥ ${fmt(r.min)}` : ""}{r.max != null ? ` ≤ ${fmt(r.max)}` : ""}</span></div>)}
             <Link href="/app/impostazioni" className="btn sm" style={{ alignSelf: "flex-start" }}>Modifica</Link>
           </div>
           {best && open.length > 1 && (

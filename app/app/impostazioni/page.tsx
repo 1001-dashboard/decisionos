@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Plus, Trash2, Download, AlertOctagon, Wallet, Target, User, ShieldCheck } from "lucide-react";
 import { useWs, type Profile } from "@/components/Workspace";
 import { Top } from "@/components/Shell";
-import { RES_LABEL, uid, type Rule } from "@/lib/engine";
+import { customRes, resLabel, uid, type Rule } from "@/lib/engine";
 
 import { PRI } from "@/lib/priorities";
 const CTX: Record<string, string> = { economia: "Economia", lavoro: "Lavoro", famiglia: "Famiglia", tempo: "Tempo", residenza: "Residenza", progetti: "Progetti" };
@@ -52,6 +52,17 @@ export default function Impostazioni() {
               <div><label className="f">Aggiornato</label><input type="date" value={p.resources_meta[k]?.dt ?? ""} onChange={(e) => set({ resources_meta: { ...p.resources_meta, [k]: { ...p.resources_meta[k], dt: e.target.value } } })} /></div>
             </div>
           ))}
+          <h4 style={{ margin: "6px 0 0" }}>Altre risorse</h4>
+          <small>Quello che le tue decisioni consumano oltre a soldi e ore: persone disponibili, budget di reparto, capacità, giorni di ferie, energia… Ogni strada potrà aumentarle o ridurle, e i limiti qui sotto valgono anche per loro.</small>
+          {customRes(p.resources, p.resources_meta).map((k) => (
+            <div key={k} className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <input aria-label="Nome risorsa" style={{ flex: "2 1 160px" }} value={p.resources_meta[k]?.l ?? ""} onChange={(e) => set({ resources_meta: { ...p.resources_meta, [k]: { ...p.resources_meta[k], l: e.target.value } } })} />
+              <input aria-label="Unità" placeholder="unità" style={{ flex: "1 1 90px" }} value={p.resources_meta[k]?.u ?? ""} onChange={(e) => set({ resources_meta: { ...p.resources_meta, [k]: { ...p.resources_meta[k], u: e.target.value } } })} />
+              <input aria-label="Valore oggi" type="number" style={{ flex: "1 1 90px" }} value={p.resources[k] ?? 0} onChange={(e) => set({ resources: { ...p.resources, [k]: +e.target.value }, resources_meta: { ...p.resources_meta, [k]: { ...p.resources_meta[k], dt: today } } })} />
+              <button className="iconbtn" aria-label="Togli risorsa" onClick={() => { const r = { ...p.resources }, mt = { ...p.resources_meta }; delete r[k]; delete mt[k]; set({ resources: r, resources_meta: mt, rules: p.rules.filter((x) => x.r !== k) }); }}><Trash2 size={15} /></button>
+            </div>
+          ))}
+          <button className="btn sm" style={{ alignSelf: "flex-start" }} onClick={() => { const k = "x_" + uid().slice(0, 6); set({ resources: { ...p.resources, [k]: 0 }, resources_meta: { ...p.resources_meta, [k]: { l: "Nuova risorsa", u: "", dt: today } } }); }}><Plus size={14} /> Risorsa</button>
           <div><label className="f">Orizzonte predefinito</label>
             <select value={p.horizon} onChange={(e) => set({ horizon: +e.target.value })}><option value={3}>3 mesi</option><option value={12}>12 mesi</option><option value={24}>24 mesi</option><option value={60}>5 anni</option></select></div>
           <hr style={{ margin: "4px 0" }} />
@@ -60,7 +71,7 @@ export default function Impostazioni() {
           {p.rules.map((r, i) => (
             <div key={r.id} className="row" style={{ flexWrap: "wrap" }}>
               <input style={{ flex: "1 1 160px" }} value={r.name} onChange={(e) => setRule(i, { name: e.target.value })} />
-              <select style={{ flex: "1 1 170px", width: "auto" }} value={r.r} onChange={(e) => setRule(i, { r: e.target.value })}>{RULE_R.map((x) => <option key={x} value={x}>{RES_LABEL[x]}</option>)}</select>
+              <select style={{ flex: "1 1 170px", width: "auto" }} value={r.r} onChange={(e) => setRule(i, { r: e.target.value })}>{[...RULE_R, ...customRes(p.resources, p.resources_meta)].map((x) => <option key={x} value={x}>{resLabel(x, p.resources_meta)}</option>)}</select>
               <span className="muted">≥</span><input className="n" style={{ width: 90 }} type="number" value={r.min ?? ""} onChange={(e) => setRule(i, { min: e.target.value === "" ? null : +e.target.value })} />
               <span className="muted">≤</span><input className="n" style={{ width: 90 }} type="number" value={r.max ?? ""} onChange={(e) => setRule(i, { max: e.target.value === "" ? null : +e.target.value })} />
               <button className="iconbtn" onClick={() => set({ rules: p.rules.filter((_, j) => j !== i) })}><Trash2 size={15} /></button>

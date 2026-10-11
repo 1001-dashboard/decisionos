@@ -1,5 +1,5 @@
 import { BP } from "./bp.ts";
-import { uid, LEVELS, levelOf, isMoneyCrit, redactMoney, normalize, type Decision, type DecResult, type Model, type Rel, type Resources, type Opt, type Phase, type PlanKind, type Risk } from "./engine.ts";
+import { uid, LEVELS, levelOf, isMoneyCrit, redactMoney, normalize, type Decision, type DecResult, type Model, type Rel, type Resources, type Opt, type PlanKind, type Risk, type Horizon, PHASE_SETS, snapPhase, phasesOf, areasOf } from "./engine.ts";
 
 export async function ai<T = unknown>(mode: string, payload: unknown): Promise<T> {
   const r = await fetch(`${BP}/api/ai`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode, payload }) });
@@ -45,6 +45,9 @@ export function compact(d: Decision, r: DecResult | undefined, opts: { eco: bool
       ...(opts.eco ? { im: (o.impacts ?? []).map((i) => [i.r, i.v, i.src === "ai" ? "stima AI" : ""]) } : {}),
     })),
     i: (m.assumptions ?? []).map((a) => `${tx(a.t)} [${a.rel}${a.aff ? "," + a.aff : ""}]`),
+    ...(m.tipo ? { k: m.tipo } : {}),
+    // orizzonti e aree: inviati solo se già fissati, altrimenti l'Analista li propone
+    ...(m.phases?.length || m.options.some((o) => o.tl?.length) ? { hz: { ph: phasesOf(m).map((x) => [x.h, x.l]), ar: areasOf(m) } } : {}),
     ...(r ? {
       r: r.rows.map((x) => [x.name, x.score, x.excluded.length ? "ESCLUSA:" + tx(x.excluded.join(";")) : x.range ? `range ${x.range.join("-")}` : ""]),
       sens: r.sens.filter((s) => s.delta != null).map((s) => `${s.name} ${s.delta}pt→${r.rows.find((x) => x.id === s.newTop)?.name}`),
@@ -61,15 +64,23 @@ export type AiPlan = {
   rk?: { t?: string; p?: string; c?: number; m?: number; d?: number; x?: string }[];
 };
 export type AiStrade = { x?: string; a?: AiPlan[] };
+/** Orizzonti e aree proposti dall'AI, ripuliti: 3-5 orizzonti ordinati, max 8 aree. */
+export function hzFromAi(ph: unknown, ar: unknown): { phases?: Horizon[]; areas?: string[] } {
+  const phases = arr<{ h?: unknown; l?: unknown }>(ph).filter((x) => x && Number.isFinite(Number(x.h)) && typeof x.l === "string" && x.l.trim())
+    .map((x) => ({ h: Math.max(0, Number(x.h)), l: String(x.l).trim().slice(0, 32) })).sort((a, b) => a.h - b.h)
+    .filter((x, i, a) => i === 0 || x.h !== a[i - 1].h).slice(0, 5);
+  const areas = [...new Set(arr<unknown>(ar).filter((x) => typeof x === "string" && x.trim()).map((x) => String(x).trim().toLowerCase().slice(0, 24)))].slice(0, 8);
+  return { ...(phases.length >= 3 ? { phases } : {}), ...(areas.length >= 3 ? { areas } : {}) };
+}
 
-const KD = ["base", "cond", "prova", "cerca"];
-const AR = ["soldi", "tempo", "famiglia", "lavoro", "casa", "progetti", "rischi"];
+const KD = ["base", "cond", "prova", "temp", "rinvio", "cerca", "sq"];
 /** Converte in modo difensivo la parte «piano» di una strada proposta dall'AI. Tutto resta marcato come proposto dall'AI. */
-export function planFromAi(o: Partial<AiPlan>): Pick<Opt, "kd" | "tl" | "next" | "cond" | "risks"> {
+export function planFromAi(o: Partial<AiPlan>, phs: Horizon[] = PHASE_SETS.mesi.ph, ars?: string[]): Pick<Opt, "kd" | "tl" | "next" | "cond" | "risks"> {
   const tx = (v: unknown, n = 160) => (typeof v === "string" ? v.trim().slice(0, n) : "");
   const tl = arr<NonNullable<AiPlan["tl"]>[0]>(o.tl).filter((x) => x && tx(x.t)).slice(0, 8).map((x) => {
-    const h = [1, 3, 6, 12].reduce((a, b) => (Math.abs(b - Number(x.h ?? 3)) < Math.abs(a - Number(x.h ?? 3)) ? b : a), 3);
-    return { h, a: (AR.includes(String(x.a)) ? x.a : undefined) as Phase["a"], t: tx(x.t), src: "ai" as const };
+    const h = snapPhase(phs, Number.isFinite(Number(x.h)) ? Number(x.h) : phs[1]?.h ?? 0).h;
+    const a = typeof x.a === "string" && x.a.trim() ? x.a.trim().toLowerCase().slice(0, 24) : undefined;
+    return { h, a: a && (!ars || ars.includes(a)) ? a : a ?? undefined, t: tx(x.t), src: "ai" as const };
   });
   const next = arr<string>(o.nx).map((x) => tx(x, 140)).filter(Boolean).slice(0, 5);
   const cond = arr<NonNullable<AiPlan["cd"]>[0]>(o.cd).filter((x) => x && tx(x.t)).slice(0, 5).map((x) => ({
@@ -82,11 +93,14 @@ export function planFromAi(o: Partial<AiPlan>): Pick<Opt, "kd" | "tl" | "next" |
 }
 
 /** Unisce le strade proposte dall'AI al modello: completa quelle esistenti (solo dove vuote) e aggiunge le nuove. */
-export function mergeStrade(m: Model, x: AiStrade): { model: Model; added: string[] } {
+export function mergeStrade(m: Model, x: AiStrade & { ph?: unknown; ar?: unknown }): { model: Model; added: string[] } {
   const mm: Model = structuredClone(m);
+  const hz = hzFromAi(x.ph, x.ar);
+  if (!mm.phases?.length && hz.phases && !mm.options.some((o) => o.tl?.length)) mm.phases = hz.phases;
+  if (!mm.areas?.length && hz.areas) mm.areas = hz.areas;
   const added: string[] = [];
   for (const a of arr<AiPlan>(x.a).filter((a) => a && typeof a.n === "string" && a.n.trim()).slice(0, 6)) {
-    const pl = planFromAi(a);
+    const pl = planFromAi(a, phasesOf(mm), areasOf(mm));
     const ex = mm.options.find((o) => norm(o.name) === norm(a.n));
     if (ex) {
       if (!ex.tl?.length && pl.tl) ex.tl = pl.tl;
@@ -104,7 +118,7 @@ export function mergeStrade(m: Model, x: AiStrade): { model: Model; added: strin
 }
 
 export type AiStruct = {
-  n?: string; k?: string; x?: string; serve?: boolean;
+  n?: string; k?: string; x?: string; serve?: boolean; ph?: { h: number; l: string }[]; ar?: string[];
   a?: (string | AiPlan)[];
   mi?: { a: string; r: string; v: number | number[]; t?: string }[];
   c?: { n: string; w?: number; t?: string; u?: string; p?: number; o?: number; i?: number; g?: string; y?: string }[];
@@ -128,10 +142,13 @@ export function structToModel(x: AiStruct): { name: string; model: Model; questi
   const crit = (id: string) => criteria.find((c) => c.id === id)!;
   const cid = (n: string) => criteria.find((c) => norm(c.name) === norm(n))?.id;
   const short = (l?: string[]) => arr<string>(l).filter((t) => typeof t === "string" && t.trim()).slice(0, 4).map((t) => t.trim().slice(0, 140));
+  const tipo = typeof x.k === "string" ? x.k : undefined;
+  const hz = hzFromAi(x.ph, x.ar);
+  const phs = hz.phases ?? phasesOf({ tipo }), ars = hz.areas ?? areasOf({ tipo });
   const options = arr<NonNullable<AiStruct["a"]>[0]>(x.a).filter((a) => typeof a === "string" || (a && typeof a.n === "string")).slice(0, 5).map((a) => {
     const o: AiPlan = typeof a === "string" ? { n: a } : a;
     return { id: uid(), name: o.n, s: {} as Record<string, number>, raw: {} as Record<string, number>, m: {} as NonNullable<Model["options"][0]["m"]>,
-      impacts: [] as NonNullable<Model["options"][0]["impacts"]>, pro: short(o.p), con: short(o.m), ...planFromAi(o) };
+      impacts: [] as NonNullable<Model["options"][0]["impacts"]>, pro: short(o.p), con: short(o.m), ...planFromAi(o, phs, ars) };
   });
   const oid = (n: string) => options.find((o) => norm(o.name) === norm(n));
   for (const s of arr<NonNullable<AiStruct["s"]>[0]>(x.s)) {
@@ -159,7 +176,7 @@ export function structToModel(x: AiStruct): { name: string; model: Model; questi
   const assumptions = arr<NonNullable<AiStruct["i"]>[0]>(x.i).filter((a) => a && typeof a.t === "string").map((a) => ({ id: uid(), t: a.t, rel: (a.k ?? "S") as Rel, aff: a.a }));
   return {
     name: typeof x.n === "string" && x.n ? x.n : "Nuova decisione",
-    model: { criteria, constraints, options, assumptions, tipo: typeof x.k === "string" ? x.k : undefined, nota: typeof x.x === "string" && x.x ? x.x : undefined },
+    model: { criteria, constraints, options, assumptions, tipo, nota: typeof x.x === "string" && x.x ? x.x : undefined, ...hz },
     questions: arr<string>(x.q).filter((q) => typeof q === "string").slice(0, 3), serve: !!x.serve,
   };
 }

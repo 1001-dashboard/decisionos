@@ -1,15 +1,16 @@
 "use client";
 import { useMemo, useState } from "react";
-import { analyzeDecision, cashSeries, combos, eur, fmt, oddScenario, SCEN, type Decision, type Dep, type Resources, type Rule, type Scen } from "@/lib/engine";
+import { analyzeDecision, cashSeries, combos, customRes, eur, fmt, oddScenario, SCEN, type ResMeta, type Decision, type Dep, type Resources, type Rule, type Scen } from "@/lib/engine";
 import { LineChart, Legend, PAL } from "./charts";
 
 const H = [3, 12, 24, 60];
 const HL: Record<number, string> = { 3: "3 mesi", 12: "12 mesi", 24: "24 mesi", 60: "5 anni" };
 const SL: Record<Scen, string> = { sfavorevole: "Sfavorevole", centrale: "Centrale", favorevole: "Favorevole" };
 
-export default function ScenarioPanel({ decs, deps, resources, rules, h0 = 24, max = 4 }: {
-  decs: Decision[]; deps: Dep[]; resources: Resources; rules: Rule[]; h0?: number; max?: number;
+export default function ScenarioPanel({ decs, deps, resources, rules, h0 = 24, max = 4, meta = {} }: {
+  decs: Decision[]; deps: Dep[]; resources: Resources; rules: Rule[]; h0?: number; max?: number; meta?: ResMeta;
 }) {
+  const cres = customRes(resources, meta);
   const [h, setH] = useState(H.includes(h0) ? h0 : 24);
   const [sc, setSc] = useState<Scen>("centrale");
   const plans = useMemo(() => {
@@ -43,7 +44,7 @@ export default function ScenarioPanel({ decs, deps, resources, rules, h0 = 24, m
       ) : <div className="note bad">Nessun piano rispetta vincoli e collegamenti in scenario centrale.</div>}
       <div className="tablewrap">
         <table className="t num">
-          <thead><tr><th>Piano</th><th>Fabbisogno iniziale</th><th>Flusso/mese</th><th>Liquidità a {HL[h]}</th><th>Autonomia</th><th>Ore libere</th><th>Stato</th></tr></thead>
+          <thead><tr><th>Piano</th><th>Fabbisogno iniziale</th><th>Flusso/mese</th><th>Liquidità a {HL[h]}</th><th>Autonomia</th><th>Ore libere</th>{cres.map((k) => <th key={k}>{meta[k]?.l}</th>)}<th>Stato</th></tr></thead>
           <tbody>
             {plans.slice(0, 12).map((p) => {
               const r = p.scen[sc].res, viol = p.scen[sc].viol;
@@ -56,6 +57,7 @@ export default function ScenarioPanel({ decs, deps, resources, rules, h0 = 24, m
                   <td>{eur(r.cash_end ?? 0)}{isAi(p) && T}</td>
                   <td>{r.autonomia_mesi === Infinity ? "∞" : `${fmt(r.autonomia_mesi)} mesi`}</td>
                   <td>{fmt(r.hours_w ?? 0)} h</td>
+                  {cres.map((k) => <td key={k}>{fmt(r[k] ?? 0)}{meta[k]?.u ? ` ${meta[k].u}` : ""}</td>)}
                   <td>{p.excluded.length ? <span className="pill bad" title={p.excluded.join("; ")}>escluso</span>
                     : viol.length ? <span className="pill warn" title={viol.join("; ")}>viola: {viol[0].split(":")[0]}</span>
                     : <span className="pill ok">regge</span>}</td>

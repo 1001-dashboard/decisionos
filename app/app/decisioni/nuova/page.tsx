@@ -15,7 +15,7 @@ import { uid, weightsFromImp, redactMoney, PLAN_L, type Model } from "@/lib/engi
 
 const TI: Record<string, React.ReactNode> = { briefcase: <Briefcase size={20} />, home: <Home size={20} />, car: <Car size={20} />, rocket: <Rocket size={20} />, package: <Package size={20} />, users: <Users size={20} />, graduation: <GraduationCap size={20} />, piggy: <PiggyBank size={20} /> };
 const REL = { F: ["ok", "verificato"], D: ["info", "dichiarato"], S: ["warn", "stima"], "?": ["bad", "da chiarire"] } as const;
-const TIPO: Record<string, string> = { lavoro: "Lavoro", casa: "Casa", acquisto: "Acquisto", soldi: "Soldi", progetto: "Progetto", relazioni: "Relazioni", famiglia: "Famiglia", salute: "Salute", studio: "Studio", morale: "Scelta morale", altro: "Altro" };
+const TIPO: Record<string, string> = { lavoro: "Lavoro", casa: "Casa", acquisto: "Acquisto", soldi: "Soldi", progetto: "Progetto", relazioni: "Relazioni", famiglia: "Famiglia", salute: "Salute", studio: "Studio", morale: "Scelta morale", fornitore: "Fornitore", persona: "Assunzione", auto: "Auto o mezzo", altro: "Altro" };
 
 type Draft = { name: string; model: Model; questions: string[]; serve: boolean };
 

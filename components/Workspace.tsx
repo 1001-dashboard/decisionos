@@ -6,7 +6,8 @@ import { PRI_DEFAULT } from "@/lib/priorities";
 
 export type Profile = {
   resources: Resources;
-  resources_meta: Record<string, { dt?: string; src?: string }>;
+  /** l/u: nome e unità delle risorse definite da te (chiave «x_…»): persone, budget, capacità, ferie… */
+  resources_meta: Record<string, { dt?: string; src?: string; l?: string; u?: string }>;
   rules: Rule[];
   priorities: Record<string, number>;
   context: Record<string, string>;

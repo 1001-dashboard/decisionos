@@ -1,6 +1,6 @@
 // Testi del report, calcolati dal motore (nessuna AI): cosa comporta ogni scelta, sintesi, piano d'azione.
 import {
-  applyCombo, crossEffects, eur, fmt, levelOf, normalize, riskViews, LEVELS, SCEN, RISK_W, PHASE_L,
+  applyCombo, crossEffects, eur, fmt, levelOf, normalize, riskViews, phasesOf, snapPhase, LEVELS, SCEN, RISK_W,
   type Crit, type Decision, type DecResult, type Dep, type Opt, type Resources, type Rule, type Scen,
 } from "./engine.ts";
 
@@ -130,7 +130,8 @@ export function briefing(dec: Decision, r: DecResult, o: Opt, base: Resources = 
   for (const k of rv.filter((x) => x.p !== "bassa").slice(0, 2))
     watch.push(`Rischio ${PL[k.p]}: ${k.t}${k.tot ? ` (se succede ${eur(k.tot)}${k.breaks.length ? ", oltre i tuoi limiti" : ""})` : ""}${k.x ? `. Puoi ridurlo: ${k.x}` : ""}.`);
   // cosa succede nel tempo: elenco a parte, in ordine (le tappe non sono sempre negative)
-  const seq = [...(o.tl ?? [])].sort((a, b) => a.h - b.h).slice(0, 6).map((x) => `${PHASE_L[x.h] ?? `Entro ${x.h} mesi`}: ${x.t}`);
+  const phs = phasesOf(dec.model);
+  const seq = [...(o.tl ?? [])].sort((a, b) => a.h - b.h).slice(0, 6).map((x) => `${snapPhase(phs, x.h).l}: ${x.t}`);
   // dove è debole rispetto alle altre
   const others = r.rows.filter((x) => x.id !== o.id && !x.excluded.length);
   if (row && others.length) {
@@ -151,7 +152,8 @@ export function briefing(dec: Decision, r: DecResult, o: Opt, base: Resources = 
     if (v[1] > 0) plus.push(`Nel caso probabile ti restano ${eur(v[1])} al mese in più rispetto a oggi${v[2] > v[1] ? ` (fino a ${eur(v[2])} se va bene)` : ""}${cm.src === "ai" ? ", stima dell'AI da verificare" : ""}.`);
     else if (v[1] < 0) watch.push(`Nel caso probabile hai ${eur(v[1])} al mese rispetto a oggi.`);
   }
-  if (o.kd === "prova" && !plus.some((x) => /tornare/i.test(x))) plus.push("Puoi tornare indietro: è una prova con una data di verifica.");
+  if ((o.kd === "prova" || o.kd === "temp") && !plus.some((x) => /tornare/i.test(x))) plus.push(o.kd === "prova" ? "Puoi tornare indietro: è una prova con una data di verifica." : "È limitata nel tempo: a scadenza la rivedi.");
+  if (o.kd === "rinvio") plus.push("Rimandi a quando avrai più informazioni: decidi con meno incertezza.");
   if (o.kd === "cond") plus.push("Dici sì solo se le condizioni chiave sono garantite: limiti il rischio prima di partire.");
   const mit = rv.filter((x) => x.x && x.p !== "bassa").length;
   if (mit) plus.push(`${mit === 1 ? "Un rischio ha" : `${mit} rischi hanno`} una contromisura concreta.`);
