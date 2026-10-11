@@ -1,6 +1,6 @@
 "use client";
 import { useMemo, useState } from "react";
-import { analyzeDecision, cashSeries, combos, eur, fmt, SCEN, type Decision, type Dep, type Resources, type Rule, type Scen } from "@/lib/engine";
+import { analyzeDecision, cashSeries, combos, eur, fmt, oddScenario, SCEN, type Decision, type Dep, type Resources, type Rule, type Scen } from "@/lib/engine";
 import { LineChart, Legend, PAL } from "./charts";
 
 const H = [3, 12, 24, 60];
@@ -22,6 +22,7 @@ export default function ScenarioPanel({ decs, deps, resources, rules, h0 = 24, m
   const isAi = (p: { combo: string[] }) => p.combo.some((id) => aiOpt.has(id));
   const T = <span className="aitag" title="Importi stimati dall'AI, non confermati">AI</span>;
   const anyAi = plans.slice(0, 12).some(isAi);
+  const odd = decs.flatMap((d) => d.model.options.filter((o) => oddScenario(o)).map((o) => o.name));
   const cashRule = rules.find((r) => r.r === "cash_end" && r.min != null);
   if (!plans.length) return <div className="empty">Servono decisioni con alternative ammissibili e impatti sulle risorse.</div>;
   return (
@@ -65,6 +66,7 @@ export default function ScenarioPanel({ decs, deps, resources, rules, h0 = 24, m
         </table>
       </div>
       {anyAi && <div className="aiflag"><span>I piani marcati <span className="aitag">AI</span> usano importi stimati dall&apos;AI e non ancora confermati: verificali e confermali nel passo «Soldi e tempo» della decisione.</span></div>}
+      {odd.length > 0 && sc === "sfavorevole" && <div className="note warn" style={{ fontSize: 13 }}>Per {odd.map((n) => `«${n}»`).join(", ")} lo scenario sfavorevole cambia segno rispetto al probabile: descrive un altro evento (es. perdere lo stipendio), non la stessa strada andata peggio. Correggilo al passo «Soldi e tempo».</div>}
       <p className="muted" style={{ fontSize: 13 }}>Proiezione lineare a flusso costante. Gli scenari sono ipotesi esplicite, non probabilità.</p>
     </div>
   );

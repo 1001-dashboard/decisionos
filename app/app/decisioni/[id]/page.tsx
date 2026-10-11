@@ -10,10 +10,12 @@ import { useWs } from "@/components/Workspace";
 import { ScoreBars } from "@/components/charts";
 import {
   analyzeDecision, applyCombo, combos, eur, fmt, normalize, turningPoints, uid, weightsFromImp, scaleNum, levelOf,
-  tradeoff, solidity, crossEffects, hashOf, biasChecks, conclusive, infoValue, readiness, focus, stopText, isStatusQuo,
+  tradeoff, solidity, crossEffects, hashOf, biasChecks, conclusive, infoValue, readiness, focus, stopText, fallbackText, oddScenario, isStatusQuo, riskViews, riskSummary,
+  type Resources, type Rule, type Risk,
   AREAS, PHASES, PHASE_L, PLAN_L, type Area, type Cond, type Dilemma as DilemmaT, type PlanKind, type Phase,
   LEVELS, type Crit, type Decision, type Impact, type Model, type Opt, type Rel, untestedText } from "@/lib/engine";
 import { CRIT_LIB } from "@/lib/templates";
+import { briefing } from "@/lib/narrative";
 import { impFor, priGap } from "@/lib/priorities";
 import { ai, compact, mergeStrade, type AiStrade } from "@/lib/ai";
 
@@ -88,7 +90,11 @@ function Dilemma({ d, add }: { d: DilemmaT; add: (kd: PlanKind, name: string) =>
 }
 
 /** Conseguenze nel tempo, decisioni generate e condizioni di una strada. */
-function Conseq({ o, i, setM, onNewDecision }: { o: Opt; i: number; setM: (fn: (m: Model) => void) => void; onNewDecision: (name: string) => void }) {
+function Conseq({ o, i, setM, onNewDecision, base, rules }: { o: Opt; i: number; setM: (fn: (m: Model) => void) => void; onNewDecision: (name: string) => void; base: Resources; rules: Rule[] }) {
+  const [rt, setRt] = useState("");
+  const rv = riskViews(o, base, rules);
+  const editR = (rid: string, fn: (r: Risk) => void) => setM((mm) => { const r = mm.options.find((y) => y.id === o.id)!.risks?.find((z) => z.id === rid); if (r) { fn(r); delete r.src; } });
+  const addRk = () => { if (!rt.trim()) return; setM((mm) => { const x = mm.options.find((y) => y.id === o.id)!; (x.risks ??= []).push({ id: uid(), t: rt.trim(), p: "media", src: "user" }); }); setRt(""); };
   const [ph, setPh] = useState(1), [ar, setAr] = useState<Area>("casa"), [tt, setTt] = useState("");
   const [nx, setNx] = useState(""), [ct, setCt] = useState("");
   const edit = (fn: (x: Opt) => void) => setM((mm) => { fn(mm.options.find((y) => y.id === o.id)!); });
@@ -156,6 +162,32 @@ function Conseq({ o, i, setM, onNewDecision }: { o: Opt; i: number; setM: (fn: (
           ))}
           <input placeholder="+ decisione che verrà dopo" value={nx} onChange={(e) => setNx(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addNx(); }} onBlur={addNx} />
         </div>
+      </div>
+
+      <div className="stack" style={{ gap: 6 }}>
+        <label className="f">Cosa può andare storto: rischi, impatto e contromisure</label>
+        {rv.map((r) => (
+          <div key={r.id} className={`riskrow p-${r.p}`}>
+            <div className="rk-top">
+              <span className="rk-t">{r.t}{r.src === "ai" && <span className="aitag" title="Proposto dall'AI">AI</span>}</span>
+              <div className="seg sm" role="group" aria-label={`Probabilità: ${r.t}`}>
+                {(["bassa", "media", "alta"] as const).map((v) => <button key={v} className={r.p === v ? "on" : ""} onClick={() => editR(r.id, (z) => { z.p = v; })}>{v[0].toUpperCase() + v.slice(1)}</button>)}
+              </div>
+              <button className="iconbtn" aria-label="Togli rischio" onClick={() => setM((mm) => { const x = mm.options.find((y) => y.id === o.id)!; x.risks = (x.risks ?? []).filter((z) => z.id !== r.id); })}><X size={13} /></button>
+            </div>
+            <div className="rk-num">
+              <span><small>Perdita una tantum</small><Num value={r.c ? -r.c : null} w={90} suffix="€" onChange={(v) => editR(r.id, (z) => { z.c = v == null ? null : -Math.abs(v); })} /></span>
+              <span><small>Al mese, mentre dura</small><Num value={r.m ? -r.m : null} w={90} suffix="€" onChange={(v) => editR(r.id, (z) => { z.m = v == null ? null : -Math.abs(v); })} /></span>
+              <span><small>Per quanti mesi</small><Num value={r.d ?? null} w={60} suffix="mesi" onChange={(v) => editR(r.id, (z) => { z.d = v == null ? null : Math.abs(v); })} /></span>
+            </div>
+            <div className="rk-imp">
+              {r.tot ? <>Se succede: <b>{eur(r.tot)}</b> in totale{r.endAfter != null ? <> · a 12 mesi resteresti con <b>{eur(r.endAfter)}</b></> : null}</> : <span className="muted">Impatto in € non indicato</span>}
+              {r.breaks.length ? <span className="pill bad">oltre i tuoi limiti</span> : r.tot && r.endAfter != null ? <span className="pill ok">entro i tuoi limiti</span> : null}
+            </div>
+            <input placeholder="Come ridurlo: la contromisura" value={r.x ?? ""} onChange={(e) => editR(r.id, (z) => { z.x = e.target.value || undefined; })} />
+          </div>
+        ))}
+        <input placeholder="+ rischio (es. contratto non rinnovato a fine stagione)" value={rt} onChange={(e) => setRt(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addRk(); }} onBlur={addRk} />
       </div>
     </div>
   );
@@ -284,7 +316,13 @@ export default function DecisionPage() {
   }
   const noBase = !(R.cash0 || R.cash_m || R.hours_w);
   const dilemma = ready.dilemma;
-  const leadOpt = ready.lead ? m.options.find((o) => o.id === ready.lead!.id) : undefined;
+  const conds = ready.open.filter((c) => c.grp === "cond"), chiar = ready.open.filter((c) => c.grp === "chiarire");
+  const rsum = riskSummary(d, R, ws.profile.rules);
+  const briefOrder = m.options.map((o) => {
+    const row = res.rows.find((x) => x.id === o.id);
+    const tag = o.id === ready.lead?.id ? "lead" : o.id === ready.fallback?.id ? "fb" : row?.excluded.length ? "out" : "";
+    return { o, b: briefing(d, res, o, R, ws.profile.rules), tag, k: tag === "lead" ? 0 : tag === "fb" ? 1 : tag === "out" ? 3 : 2 };
+  }).sort((a, b) => a.k - b.k);
   const setCondSt = (oid: string, cid: string, v: Cond["st"]) => setM((mm) => { const c = opt(mm, oid).cond?.find((x) => x.id === cid); if (c) c.st = v; });
   function addPlan(kd: PlanKind, name: string) {
     setM((mm) => { if (mm.options.length < 5) mm.options.push({ id: uid(), name, kd, s: {} }); });
@@ -416,7 +454,7 @@ export default function DecisionPage() {
           <Hint>Una scelta non è un punteggio: è una sequenza. Per ogni strada scrivi cosa succede <b>entro 30 giorni, 3, 6 e 12 mesi</b> su casa, famiglia, lavoro, soldi, tempo. Poi <b>cosa deve essere vero</b> perché abbia senso: sono le condizioni che Decision OS userà per dirti se la decisione è pronta.</Hint>
           {aiStradeBox}
           <div className="stack">
-            {m.options.map((o, i) => <Conseq key={o.id} o={o} i={i} setM={setM} onNewDecision={newDecision} />)}
+            {m.options.map((o, i) => <Conseq key={o.id} o={o} i={i} setM={setM} onNewDecision={newDecision} base={ws.profile.resources} rules={ws.profile.rules} />)}
           </div>
         </section>
       )}
@@ -612,7 +650,12 @@ export default function DecisionPage() {
                     <div className="tri">
                       {["Se va male", "Probabile", "Se va bene"].map((l, k) => <div key={l}><small>{l}</small><Num value={cmv[k]} w={92} onChange={(v) => setCm(k, v)} /></div>)}
                     </div>
-                    <small>In €/mese: quanto entra in più (o esce in più) ogni mese con questa scelta. Es. rata di 250 € → −250.</small>
+                    <small>In €/mese: quanto entra in più (o esce in più) ogni mese con questa scelta, rispetto a oggi. «Se va male» è la stessa strada con costi più alti o entrate più basse, non un altro evento. Es. rata di 250 € → −250.</small>
+                    {(() => { const od = oddScenario(o); return od ? (
+                      <div className="note warn" style={{ fontSize: 13, marginTop: 6 }}>
+                        «Se va male» ({eur(od.sf)}) è lontano dal probabile ({eur(od.c)}) e cambia segno: così descrive un altro evento, come perdere lo stipendio, non la stessa strada andata peggio. Gli scenari diventano fuorvianti.
+                        <div className="row" style={{ gap: 6, marginTop: 6 }}><button className="btn sm" onClick={() => setCm(0, od.fix)}>Usa {eur(od.fix)} (probabile −25%)</button><small>oppure scrivi il tuo valore</small></div>
+                      </div>) : null; })()}
                   </div>
                   <div>
                     <label className="f">Ore a settimana che richiede in più</label>
@@ -642,9 +685,11 @@ export default function DecisionPage() {
             <h2 style={{ margin: 0 }}>{ready.state === "pronta" ? "Pronta" : ready.state === "non_pronta" ? "Non ancora pronta" : ready.state === "nessuna" ? "Nessuna strada regge" : "Da impostare"}</h2>
             {ready.state === "non_pronta" && ready.lead && (
               <>
-                <p className="big">«{ready.lead.name}» è potenzialmente la strada migliore per le tue priorità, <b>ma solo se</b>:</p>
+                {conds.length > 0 ? <p className="big">«{ready.lead.name}» è potenzialmente la strada migliore per le tue priorità, <b>ma solo se</b>:</p>
+                  : <p className="big">«{ready.lead.name}» è in testa, ma l&apos;analisi non è ancora abbastanza affidabile per decidere.</p>}
+                {conds.length > 0 && <div className="cgrp">Condizioni perché la strada regga</div>}
                 <ol className="conds">
-                  {ready.open.map((c) => (
+                  {conds.map((c) => (
                     <li key={c.key}>
                       <span>{c.t}</span>
                       {c.gate && <span className="pill bad">se no, esce</span>}
@@ -656,7 +701,13 @@ export default function DecisionPage() {
                     </li>
                   ))}
                 </ol>
-                {ready.fallback && <p style={{ margin: 0 }}>Se queste condizioni non si verificano, la scelta cambia: allora prevale <b>{ready.fallback.name}</b>.</p>}
+                {conds.length > 0 && ready.fallback && <p style={{ margin: 0 }} className="fbtxt">{fallbackText(ready)}</p>}
+                {chiar.length > 0 && (
+                  <>
+                    <div className="cgrp">Cose da chiarire prima di decidere</div>
+                    <ul className="conds chiar">{chiar.map((c) => <li key={c.key}>{c.t}</li>)}</ul>
+                  </>
+                )}
               </>
             )}
             {ready.state === "pronta" && ready.lead && (
@@ -678,23 +729,51 @@ export default function DecisionPage() {
             </div>
           )}
           {foc && (
-            <div className="grid g2" style={{ alignItems: "start" }}>
-              <div className="card stack">
-                <h3 style={{ margin: 0 }}><Scale size={18} /> La scelta vera</h3>
-                <p style={{ margin: 0 }}>{foc.trade}</p>
-                {foc.calm.length > 0 && <small>Non cambiano la scelta, qualunque valore abbiano: {foc.calm.map((x) => `«${x.critName}» di ${x.optName}`).join(", ")}.</small>}
+            <div className="card stack">
+              <h3 style={{ margin: 0 }}><Scale size={18} /> La scelta vera</h3>
+              <p style={{ margin: 0 }}>{foc.trade}</p>
+              {foc.calm.length > 0 && <small>Non cambiano la scelta, qualunque valore abbiano: {foc.calm.map((x) => `«${x.critName}» di ${x.optName}`).join(", ")}.</small>}
+            </div>
+          )}
+          {m.options.length > 1 && (
+            <div className="stack" style={{ gap: 10 }}>
+              <h3 className="sh2"><Milestone size={18} /> Se scegli questa strada</h3>
+              <div className="grid g2 briefs" style={{ alignItems: "start" }}>
+                {briefOrder.map(({ o, b, tag }) => (
+                  <div key={o.id} className={`card stack brief ${tag}`}>
+                    <div className="row between" style={{ flexWrap: "nowrap", gap: 8 }}>
+                      <h3 style={{ margin: 0, minWidth: 0 }}>Se scegli «{o.name}»</h3>
+                      {tag === "lead" ? <span className="pill ok">in testa</span> : tag === "fb" ? <span className="pill info">riserva</span> : tag === "out" ? <span className="pill bad">scartata</span> : null}
+                    </div>
+                    {b.watch.length > 0 && <div><b className="bw">Tieni conto di</b><ul className="clean">{b.watch.map((x, k) => <li key={k}>{x}</li>)}</ul></div>}
+                    {b.plus.length > 0 && <div><b className="bp">Però hai anche</b><ul className="clean">{b.plus.map((x, k) => <li key={k}>{x}</li>)}</ul></div>}
+                    {b.seq.length > 0 && <div><b className="bs">Cosa succede dopo</b><ul className="clean tmini">{b.seq.map((x, k) => { const [ph, ...t] = x.split(": "); return <li key={k}><span className="ph">{ph}</span> {t.join(": ")}</li>; })}</ul></div>}
+                    {b.next.length > 0 && <small><b>Poi dovrai decidere:</b> {b.next.join("; ")}.</small>}
+                    {!b.watch.length && !b.plus.length && !b.seq.length && <small className="muted">Mancano conseguenze, condizioni e rischi: aggiungili al passo «Conseguenze».</small>}
+                  </div>
+                ))}
               </div>
-              {leadOpt && (
-                <div className="card stack">
-                  <h3 style={{ margin: 0 }}><Milestone size={18} /> Se scegli {leadOpt.name}, cosa succede dopo</h3>
-                  {leadOpt.tl?.length ? (
-                    <ul className="clean tmini">
-                      {PHASES.flatMap((h) => (leadOpt.tl ?? []).filter((x) => x.h === h).map((x, k) => <li key={h + "-" + k}><span className="ph">{PHASE_L[h]}</span> {x.t}</li>))}
-                    </ul>
-                  ) : <small>Non hai ancora descritto cosa succede nel tempo. <button className="btn ghost sm" onClick={() => setStep(1)}>Descrivilo</button></small>}
-                  {leadOpt.next?.length ? <div><b>Ti costringe a decidere poi:</b><ul className="clean">{leadOpt.next.map((x) => <li key={x}>{x}</li>)}</ul></div> : null}
-                </div>
-              )}
+            </div>
+          )}
+          {rsum.some((x) => x.n) && (
+            <div className="card stack">
+              <h3 style={{ margin: 0 }}><ShieldAlert size={18} /> Rischi a confronto</h3>
+              <div className="tablewrap">
+                <table className="t num riskt">
+                  <thead><tr><th>Strada</th><th>Rischi</th><th>Rischio peggiore, se succede</th><th>Costo pesato</th><th>Oltre i tuoi limiti</th></tr></thead>
+                  <tbody>{rsum.map((x) => (
+                    <tr key={x.id} className={ready.lead?.id === x.id ? "lead" : ""}>
+                      <td><strong>{x.name}</strong></td>
+                      <td>{x.n ? <>{x.n} {x.n === 1 ? "rischio" : "rischi"}{x.alte ? <span className="pill bad" style={{ marginLeft: 6 }}>{x.alte} {x.alte === 1 ? "alto" : "alti"}</span> : null}</> : <span className="muted">nessuno indicato</span>}</td>
+                      <td>{x.worst ? <>{x.worst.t}{x.worst.tot ? <> · <b>{eur(x.worst.tot)}</b></> : null}</> : "—"}</td>
+                      <td>{x.n ? eur(x.pesato) : "—"}</td>
+                      <td>{x.rompe ? <span className="pill bad">{x.rompe}</span> : x.n ? <span className="pill ok">no</span> : "—"}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+              <small>Costo pesato = somma degli impatti × peso convenzionale della probabilità (bassa 10%, media 30%, alta 60%). Serve a confrontare quanto è rischiosa ogni strada, non è una previsione. Rischi e contromisure si modificano nel passo «Conseguenze».</small>
+              {rsum.some((x) => !x.n) && <small className="muted">Alcune strade non hanno rischi indicati: senza, sembrano più sicure di quanto sono.</small>}
             </div>
           )}
           <details className="card deep">

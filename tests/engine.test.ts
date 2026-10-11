@@ -324,4 +324,65 @@ console.log("engine: 10/10 ok");
   assert.deepEqual(mgD.added, ["Spagna continentale"]);
   assert.equal(mgD.model.options.find((o) => o.name === "Accetto Ibiza")!.tl!.length, exD.model.options[0].tl!.length);   // non sovrascrive
   console.log("engine: strade, conseguenze, decisione condizionata ok");
+  // 31. «se va male» che è un altro evento (stipendio perso) segnalato; variazione realistica no
+  assert.ok(E.oddScenario({ id: "z", name: "Ibiza", s: {}, impacts: [{ r: "cash_m", v: [-1500, 2000, 2500] }] }));
+  assert.equal(E.oddScenario({ id: "z", name: "Ibiza", s: {}, impacts: [{ r: "cash_m", v: [1500, 2000, 2500] }] }), null);
+  assert.equal(E.oddScenario({ id: "z", name: "Roma", s: {}, impacts: [{ r: "cash_m", v: [-600, 0, 500] }] }), null);
+  // 32. riserva con verifiche vincolanti aperte: niente «passa a» secco
+  const fbD = structuredClone((await import("../lib/demo.ts")).exampleDecision);
+  const fbR = E.readiness(fbD, E.analyzeDecision(fbD), {}, []);
+  const fbO = fbD.model.options.find((o) => o.id === fbR.fallback!.id)!;
+  fbO.cond = [...(fbO.cond ?? []), { id: "g9", t: "Contratto di 12 mesi", gate: true, st: "?" }];
+  const fbR2 = E.readiness(fbD, E.analyzeDecision(fbD), {}, []);
+  assert.ok(fbR2.fallback!.open.includes("Contratto di 12 mesi"));
+  assert.ok(E.stopText(fbR2).includes("prossima strada da valutare") && !E.stopText(fbR2).includes("passa a"), E.stopText(fbR2));
+  assert.ok(!E.stopText(fbR).includes("prossima strada da valutare"));
+  // 33. condizioni separate da cose da chiarire
+  assert.ok(fbR.open.some((c) => c.grp === "cond") && fbR.open.some((c) => c.grp === "chiarire"));
+  assert.ok(fbR.open.filter((c) => c.kind === "basi" || c.kind === "doppio").every((c) => c.grp === "chiarire"));
+  assert.ok(fbR.open.filter((c) => c.kind === "dato" && c.t.startsWith("La tua valutazione")).every((c) => c.grp === "chiarire"));
+  console.log("engine: riserva prudente, condizioni vs cose da chiarire, scenari incoerenti ok");
+  // 34. registro dei rischi: impatto, limiti, confronto, condizioni
+  assert.equal(E.riskTotal({ id: "a", t: "x", p: "media", c: -2500, m: -700, d: 3 }), -4600);
+  assert.equal(E.riskTotal({ id: "a", t: "x", p: "media", c: null, m: null }), 0);
+  const rkD = structuredClone((await import("../lib/demo.ts")).exampleDecision);
+  const rbase = { cash0: 3000, cash_m: -300, hours_w: 50 }, rrules = [{ id: "l", name: "Liquidità mai negativa", r: "cash_end", min: 0 }];
+  const e1 = rkD.model.options.find((o) => o.id === "E1")!;
+  const v1 = E.riskViews(e1, rbase, rrules);
+  assert.ok(v1.length === 3 && v1[0].tot === -4600 && v1[0].endAfter != null);
+  const rsm = E.riskSummary(rkD, rbase, rrules);
+  assert.ok(rsm.every((x) => x.n > 0) && rsm.find((x) => x.id === "E1")!.alte === 1 && rsm.every((x) => x.pesato <= 0));
+  // con risparmi bassi un rischio rompe i limiti → diventa condizione della strada in testa
+  const rdR = E.readiness(rkD, E.analyzeDecision(rkD), { cash0: 0, cash_m: -300 }, rrules);
+  const leadR = rdR.lead!.id;
+  const leadV = E.riskViews(rkD.model.options.find((o) => o.id === leadR)!, { cash0: 0, cash_m: -300 }, rrules);
+  if (leadV.some((r) => r.breaks.length && r.p !== "bassa")) assert.ok(rdR.open.some((c) => c.kind === "rischio" && c.grp === "cond"));
+  // rischi dall'AI: importi sempre negativi, probabilità valida
+  const pr2 = (await import("../lib/ai.ts")).planFromAi({ n: "x", rk: [{ t: "perdo il lavoro", p: "boh", c: 3000, m: 500, d: 3, x: "contratto 12 mesi" }, { t: "" }] });
+  assert.ok(pr2.risks!.length === 1 && pr2.risks![0].p === "media" && pr2.risks![0].c === -3000 && pr2.risks![0].m === -500 && pr2.risks![0].src === "ai");
+  console.log("engine: registro dei rischi ok");
+  // 35. «se scegli questa strada»: tieni conto di / però hai anche
+  const { briefing } = await import("../lib/narrative.ts");
+  const bD = structuredClone((await import("../lib/demo.ts")).exampleDecision);
+  const bR = E.analyzeDecision(bD);
+  const b1 = briefing(bD, bR, bD.model.options.find((o) => o.id === "E1")!, { cash0: 12000, cash_m: -300 }, []);
+  assert.ok(b1.watch.some((x) => x.startsWith("Deve essere vero") && x.includes("la strada cade")), JSON.stringify(b1.watch));
+  assert.ok(b1.watch.some((x) => x.startsWith("Rischio alto")) && b1.plus.some((x) => x.startsWith("È la migliore")));
+  assert.ok(b1.seq[0].startsWith("Entro 30 giorni") && b1.next.length > 0);
+  const b4 = briefing(bD, bR, bD.model.options.find((o) => o.id === "E4")!, {}, []);
+  assert.equal(b4.plus.filter((x) => /tornare indietro/i.test(x)).length, 1);
+  console.log("narrative: se scegli questa strada ok");
+  // 36. il falso dilemma blocca «Pronta» (anche con dati certi e nessun'altra condizione)
+  const dlD: Decision = { id: "fd", name: "fd", status: "aperta", imp: 1, model: { criteria: [{ id: "p", name: "P", w: 0, imp: 3, kind: "g" }], constraints: [],
+    options: [{ id: "a", name: "Accetto Ibiza", s: { p: 100 }, m: { p: { rel: "F" } } }, { id: "b", name: "Rifiuto e resto fermo", s: { p: 25 }, m: { p: { rel: "F" } } }] } };
+  const dlR = E.readiness(dlD, E.analyzeDecision(dlD));
+  assert.ok(dlR.dilemma && dlR.state === "non_pronta" && dlR.open.some((c) => c.kind === "dilemma" && c.grp === "chiarire"), JSON.stringify(dlR.state));
+  // 37. liquidità: se lo scenario sfavorevole sfora i limiti, la frase lo dice (non il contrario)
+  const lqD: Decision = { ...dlD, model: { ...dlD.model, options: [
+    { ...dlD.model.options[0], impacts: [{ r: "cash0", v: -6000 }, { r: "cash_m", v: [-1000, 200, 400] }] }, dlD.model.options[1],
+    { id: "c", name: "Accetto Ibiza, solo a condizioni", kd: "cond", s: { p: 50 }, m: { p: { rel: "F" } } }, { id: "d", name: "Accetto Ibiza in prova", kd: "prova", s: { p: 50 }, m: { p: { rel: "F" } } }] } };
+  const lqR = E.readiness(lqD, E.analyzeDecision(lqD), { cash0: 6000, cash_m: 0 }, [{ id: "l", name: "Liquidità mai negativa", r: "cash_end", min: 0 }]);
+  const liq = lqR.open.find((c) => c.kind === "liquidita")!;
+  assert.ok(liq && liq.t.startsWith("Se va male, entro 12 mesi superi i tuoi limiti") && !liq.t.includes("non superi") && liq.t.includes("sotto il minimo"), liq?.t);
+  console.log("engine: falso dilemma blocca Pronta, frase liquidità corretta ok");
 }

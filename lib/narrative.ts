@@ -1,6 +1,6 @@
 // Testi del report, calcolati dal motore (nessuna AI): cosa comporta ogni scelta, sintesi, piano d'azione.
 import {
-  applyCombo, crossEffects, eur, fmt, levelOf, normalize, LEVELS, SCEN,
+  applyCombo, crossEffects, eur, fmt, levelOf, normalize, riskViews, LEVELS, SCEN, RISK_W, PHASE_L,
   type Crit, type Decision, type DecResult, type Dep, type Opt, type Resources, type Rule, type Scen,
 } from "./engine.ts";
 
@@ -109,4 +109,51 @@ export function actionPlan(dec: Decision, r: DecResult, turns: { text: string }[
   out.push(due ? `Decidi entro il ${new Date(due).toLocaleDateString("it-IT")}: congela l'analisi e registra la scelta` : "Fissa una data entro cui decidere, poi congela l'analisi e registra la scelta");
   out.push("Fissa una data di revisione (es. a 3 mesi) per confrontare previsioni e realtà");
   return out;
+}
+
+/* ---------- «Se scegli questa strada»: tieni conto di… però hai anche… ---------- */
+export type Brief = { watch: string[]; plus: string[]; seq: string[]; next: string[] };
+const PL: Record<string, string> = { bassa: "basso", media: "medio", alta: "alto" };
+
+/** Promemoria per strada, composto dai dati inseriti (nessuna AI): condizioni, rischi, tappe critiche, punti deboli; poi i punti a favore. */
+export function briefing(dec: Decision, r: DecResult, o: Opt, base: Resources = {}, rules: Rule[] = []): Brief {
+  const nm = normalize(dec.model);
+  const row = r.rows.find((x) => x.id === o.id);
+  const watch: string[] = [], plus: string[] = [];
+  if (row?.excluded.length) watch.push(`Oggi è scartata: ${row.excluded.join("; ")}.`);
+  // condizioni: prima quelle vincolanti
+  const cs = [...(o.cond ?? [])].filter((c) => c.st !== "si").sort((a, b) => Number(!!b.gate) - Number(!!a.gate));
+  for (const c of cs.slice(0, 3)) watch.push(c.st === "no" ? `Non soddisfatta: ${c.t}.` : `Deve essere vero: ${c.t}${c.gate ? " (senza, la strada cade)" : ""}.`);
+  for (const p of row?.pending ?? []) watch.push(`Requisito da verificare: ${p}.`);
+  // rischi più pesanti
+  const rv = riskViews(o, base, rules).sort((a, b) => RISK_W[b.p] * -b.tot - RISK_W[a.p] * -a.tot || (b.p === "alta" ? 1 : 0) - (a.p === "alta" ? 1 : 0));
+  for (const k of rv.filter((x) => x.p !== "bassa").slice(0, 2))
+    watch.push(`Rischio ${PL[k.p]}: ${k.t}${k.tot ? ` (se succede ${eur(k.tot)}${k.breaks.length ? ", oltre i tuoi limiti" : ""})` : ""}${k.x ? `. Puoi ridurlo: ${k.x}` : ""}.`);
+  // cosa succede nel tempo: elenco a parte, in ordine (le tappe non sono sempre negative)
+  const seq = [...(o.tl ?? [])].sort((a, b) => a.h - b.h).slice(0, 6).map((x) => `${PHASE_L[x.h] ?? `Entro ${x.h} mesi`}: ${x.t}`);
+  // dove è debole rispetto alle altre
+  const others = r.rows.filter((x) => x.id !== o.id && !x.excluded.length);
+  if (row && others.length) {
+    for (const c of nm.criteria) {
+      const mine = row.detail.find((d) => d.crit === c.id)?.s;
+      const th = others.map((x) => x.detail.find((d) => d.crit === c.id)?.s).filter((v): v is number => v != null);
+      if (mine == null || !th.length) continue;
+      if (mine < Math.min(...th)) watch.push(`È la più debole su «${c.name}» (${valueText(c, o)}).`);
+      if (mine > Math.max(...th)) plus.push(`È la migliore su «${c.name}» (${valueText(c, o)}).`);
+    }
+  }
+  for (const x of (o.con ?? []).slice(0, 2)) if (!watch.some((w) => w.includes(x))) watch.push(`${x}.`);
+  // a favore
+  for (const x of (o.pro ?? []).slice(0, 3)) plus.push(`${x}.`);
+  const cm = (o.impacts ?? []).find((i) => i.r === "cash_m");
+  if (cm) {
+    const v = Array.isArray(cm.v) ? cm.v : [cm.v, cm.v, cm.v];
+    if (v[1] > 0) plus.push(`Nel caso probabile ti restano ${eur(v[1])} al mese in più rispetto a oggi${v[2] > v[1] ? ` (fino a ${eur(v[2])} se va bene)` : ""}${cm.src === "ai" ? ", stima dell'AI da verificare" : ""}.`);
+    else if (v[1] < 0) watch.push(`Nel caso probabile hai ${eur(v[1])} al mese rispetto a oggi.`);
+  }
+  if (o.kd === "prova" && !plus.some((x) => /tornare/i.test(x))) plus.push("Puoi tornare indietro: è una prova con una data di verifica.");
+  if (o.kd === "cond") plus.push("Dici sì solo se le condizioni chiave sono garantite: limiti il rischio prima di partire.");
+  const mit = rv.filter((x) => x.x && x.p !== "bassa").length;
+  if (mit) plus.push(`${mit === 1 ? "Un rischio ha" : `${mit} rischi hanno`} una contromisura concreta.`);
+  return { watch: watch.slice(0, 7), plus: plus.slice(0, 5), seq, next: (o.next ?? []).slice(0, 4) };
 }

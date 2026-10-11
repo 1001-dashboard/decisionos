@@ -385,3 +385,37 @@ details.deep > summary { cursor: pointer; font-weight: 600; color: var(--navy); 
 .rep-tl ul { margin: 4px 0 0; padding-left: 1.1em; }
 @media screen and (max-width: 640px) { .rep-tl { grid-template-columns: 1fr 1fr; } }
 @media print { .rep-tl > div { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+
+.cgrp { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--navy2); margin-top: 4px; }
+.conds.chiar { list-style: disc; color: #4a5b6c; }
+.fbtxt { font-size: 14.5px; }
+.rep-cgrp { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; font-weight: 700; color: #8fd3dd; margin-top: 8px; }
+.rep-callout.warn { background: var(--orange-l); border-color: var(--orange); }
+
+/* registro dei rischi */
+.riskrow { border: 1px solid var(--line); border-left: 4px solid var(--orange); border-radius: 10px; padding: 8px 10px; display: grid; gap: 6px; font-size: 14px; }
+.riskrow.p-alta { border-left-color: var(--red); } .riskrow.p-bassa { border-left-color: var(--sky); }
+.rk-top { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; }
+.rk-t { min-width: 0; font-weight: 600; }
+.rk-num { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.rk-num > span { display: grid; gap: 2px; }
+.rk-imp { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 13.5px; }
+.riskt tr.lead td { background: var(--teal-l); }
+@media (max-width: 760px) { .rk-top { grid-template-columns: 1fr auto; } .rk-top .seg { grid-column: 1 / -1; grid-row: 2; } }
+
+.rep-note2 { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+.rep-risks { list-style: none; padding: 0; margin: 4px 0 0; display: grid; gap: 6px; font-size: 13px; }
+.rep-risks li { display: flex; gap: 8px; align-items: flex-start; break-inside: avoid; }
+.rep-risks .rp { flex: none; font-size: 10.5px; font-weight: 700; text-transform: uppercase; padding: 1px 6px; border-radius: 5px; background: var(--orange-l); color: #8a5410; margin-top: 2px; }
+.rep-risks .p-alta .rp { background: var(--red-l); color: #9b2d2d; } .rep-risks .p-bassa .rp { background: var(--sky-l); color: var(--navy2); }
+@media print { .rep-risks .rp { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+
+/* «Se scegli questa strada» */
+.sh2 { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; font-size: 1.15rem; }
+.brief { border-top: 4px solid var(--line); }
+.brief.lead { border-top-color: var(--green); } .brief.fb { border-top-color: var(--teal); } .brief.out { opacity: .8; border-top-color: var(--red); }
+.brief b.bw, .brief b.bp, .brief b.bs { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 2px; }
+.brief b.bw { color: #a5620f; } .brief b.bp { color: var(--green); } .brief b.bs { color: var(--navy2); }
+.brief ul.clean li { font-size: 14px; }
+.grid.briefs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 760px) { .grid.briefs { grid-template-columns: 1fr; } }

@@ -20,6 +20,11 @@ export type Phase = { h: number; a?: Area; t: string; src?: "ai" | "user" };
 /** Condizione perché questa strada abbia senso. gate = se è falsa la strada esce. st: ? da verificare, si, no. */
 export type Cond = { id: string; t: string; how?: string; gate?: boolean; st: "?" | "si" | "no"; src?: "ai" | "user" };
 /** Tipo di piano: base, cond = solo a condizioni, prova = a tempo con uscita, cerca = cerco altro prima/invece. */
+/** Rischio di una strada. p = probabilità grossolana; c = perdita una tantum (€, negativa); m = variazione €/mese mentre dura (negativa); d = mesi di durata; x = come ridurlo. */
+export type RiskP = "bassa" | "media" | "alta";
+export type Risk = { id: string; t: string; p: RiskP; c?: number | null; m?: number | null; d?: number | null; x?: string; src?: "ai" | "user" };
+/** Pesi convenzionali, dichiarati: servono a ordinare i rischi, non sono probabilità misurate. */
+export const RISK_W: Record<RiskP, number> = { bassa: 0.1, media: 0.3, alta: 0.6 };
 export type PlanKind = "base" | "cond" | "prova" | "cerca";
 export const PLAN_L: Record<PlanKind, string> = { base: "Strada principale", cond: "Solo a condizioni", prova: "Prova con uscita", cerca: "Cerco altro" };
 export type Opt = {
@@ -28,6 +33,7 @@ export type Opt = {
   tl?: Phase[];      // cosa succede dopo, per fasi
   next?: string[];   // decisioni che questa strada ti costringe a prendere dopo
   cond?: Cond[];     // cosa deve essere vero
+  risks?: Risk[];    // cosa può andare storto, con impatto
   pro?: string[]; con?: string[];   // pro e contro a parole (spunti da verificare)
   s: Record<string, number>;
   raw?: Record<string, number>;
@@ -536,7 +542,7 @@ export function conclusive(dec: Decision, r: DecResult): Concl {
 // ±25% della scala attorno alla stima) e guardiamo chi resta in testa. Nessuna probabilità: solo «può cambiare / non può».
 export type InfoItem = {
   opt: string; optName: string; crit: string; critName: string; kind: "manca" | "stima";
-  flips: boolean; share: number; w: number; cur?: string; text: string;
+  flips: boolean; share: number; w: number; cur?: string; text: string; num?: boolean;
   cut?: { lowId: string; highId: string; low: string; high: string };   // un solo punto di svolta: chi vince sotto e sopra
 };
 
@@ -596,7 +602,7 @@ export function infoValue(dec: Decision): InfoItem[] {
           }
         } else text = `a seconda del valore può prevalere ${[...new Set(tops)].map(nameOf).join(" oppure ")}`;
       }
-      out.push({ opt: o.id, optName: o.name, crit: c.id, critName: c.name, kind, flips, share, w: c.w, cur: curTxt, text, cut });
+      out.push({ opt: o.id, optName: o.name, crit: c.id, critName: c.name, kind, flips, share, w: c.w, cur: curTxt, text, cut, num: isNum });
     }
   }
   return out.sort((x, y) => Number(y.flips) - Number(x.flips) || y.share - x.share || y.w - x.w);
@@ -690,11 +696,14 @@ export function falseDilemma(dec: Decision): Dilemma | null {
 
 /* ---------- Decisione condizionata ---------- */
 export type CondKind = "utente" | "requisito" | "dato" | "liquidita" | "stimeAI" | "basi" | "doppio";
-export type CondView = { key: string; t: string; how: string; gate: boolean; kind: CondKind; optId?: string; condId?: string; st?: Cond["st"] };
+export type CondKind2 = CondKind | "scenario" | "rischio" | "dilemma";
+/** grp: «cond» = se è falsa la strada non regge; «chiarire» = l'analisi non è ancora abbastanza affidabile. */
+export type CondView = { key: string; t: string; how: string; gate: boolean; kind: CondKind2; grp: "cond" | "chiarire"; optId?: string; condId?: string; st?: Cond["st"] };
 export type Ready = {
   state: "vuota" | "nessuna" | "non_pronta" | "pronta";
   lead?: { id: string; name: string };
-  fallback?: { id: string; name: string } | null;
+  /** strada di riserva; open = verifiche vincolanti ancora aperte anche su di lei */
+  fallback?: { id: string; name: string; open: string[] } | null;
   open: CondView[]; done: CondView[]; failed: CondView[];
   dilemma: Dilemma | null;
 };
@@ -711,34 +720,105 @@ export function readiness(dec: Decision, r: DecResult, base: Resources = {}, rul
   const mm: Model = JSON.parse(JSON.stringify(dec.model));
   mm.options.find((x) => x.id === L.id)!.block = "esclusa per prova";
   const fb = analyzeDecision({ ...dec, model: mm }).rows.find((x) => !x.excluded.length);
-  const fallback = fb ? { id: fb.id, name: fb.name } : null;
+  const fbo = fb ? dec.model.options.find((x) => x.id === fb.id) : undefined;
+  const fallback = fb ? { id: fb.id, name: fb.name, open: [...(fbo?.cond ?? []).filter((c) => c.gate && c.st === "?").map((c) => c.t), ...fb.pending.map((p) => p.replace(": manca il dato", ""))] } : null;
   const open: CondView[] = [], done: CondView[] = [], failed: CondView[] = [];
-  const uc = (o.cond ?? []).map((c): CondView => ({ key: "u" + c.id, t: c.t, how: c.how || `Verifica: ${c.t}`, gate: !!c.gate, kind: "utente", optId: o.id, condId: c.id, st: c.st }));
+  const uc = (o.cond ?? []).map((c): CondView => ({ key: "u" + c.id, t: c.t, how: c.how || `Verifica: ${c.t}`, gate: !!c.gate, kind: "utente", grp: "cond", optId: o.id, condId: c.id, st: c.st }));
   uc.filter((c) => c.st === "si").forEach((c) => done.push(c));
   // condizioni non soddisfatte di tutte le strade: spiegano perché una strada è uscita
   for (const x of dec.model.options) for (const c of x.cond ?? []) if (c.st === "no")
-    failed.push({ key: "n" + c.id, t: x.id === o.id ? c.t : `${c.t} (${x.name}${c.gate ? ": esce" : ""})`, how: "", gate: !!c.gate, kind: "utente", optId: x.id, condId: c.id, st: "no" });
+    failed.push({ key: "n" + c.id, t: x.id === o.id ? c.t : `${c.t} (${x.name}${c.gate ? ": esce" : ""})`, how: "", gate: !!c.gate, kind: "utente", grp: "cond", optId: x.id, condId: c.id, st: "no" });
   const uo = uc.filter((c) => c.st === "?");
   uo.filter((c) => c.gate).forEach((c) => open.push(c));
-  for (const p of L.pending) open.push({ key: "p" + p, t: p.replace(": manca il dato", ""), how: `Trova il dato per «${p.replace(": manca il dato", "")}» e inseriscilo al passo «Valuta»`, gate: true, kind: "requisito", optId: L.id });
+  for (const p of L.pending) open.push({ key: "p" + p, t: p.replace(": manca il dato", ""), how: `Trova il dato per «${p.replace(": manca il dato", "")}» e inseriscilo al passo «Valuta»`, gate: true, kind: "requisito", grp: "cond", optId: L.id });
   for (const i of (info ?? infoValue(dec)).filter((x) => x.flips).slice(0, 3))
     open.push({ key: "d" + i.opt + i.crit,
-      t: i.cut && (i.cut.highId === L.id || i.cut.lowId === L.id)
+      // una soglia su una cifra è una condizione; un giudizio ancora stimato è una cosa da chiarire
+      grp: i.num ? "cond" : "chiarire",
+      t: !i.num
+        ? `La tua valutazione di «${i.critName}» per ${i.optName} è ancora ${i.cur ? `una stima (${i.cur})` : "da dare"}: ${i.text}`
+        : i.cut && (i.cut.highId === L.id || i.cut.lowId === L.id)
         ? `«${i.critName}» di ${i.optName} ${i.cut.highId === L.id ? i.cut.high : i.cut.low}${i.cur ? ` (oggi stimato ${i.cur})` : " (oggi manca)"}`
         : `«${i.critName}» di ${i.optName}: ${i.text}`, how: i.kind === "manca" ? `Trova il valore di «${i.critName}» per ${i.optName}` : `Verifica «${i.critName}» di ${i.optName} (oggi stimato ${i.cur})`, gate: false, kind: "dato", optId: i.opt });
   if (base.cash0 != null || base.cash_m != null) {
     const map = new Map(dec.model.options.map((x) => [x.id, x] as const));
     const sf = applyCombo([L.id], map, [], base, rules, 12, 0);
-    if (sf.viol.length) open.push({ key: "liq", t: `Anche se va male, entro 12 mesi non superi i tuoi limiti (oggi: ${sf.viol.join("; ")})`, how: "Prevedi un cuscinetto o una garanzia: anticipo, alloggio pagato, contratto più lungo, data di uscita", gate: false, kind: "liquidita", optId: L.id });
+    if (sf.viol.length) open.push({ key: "liq", t: `Se va male, entro 12 mesi superi i tuoi limiti (${sf.viol.join("; ")}): perché la strada regga serve un cuscinetto o una garanzia`, how: "Prevedi un cuscinetto o una garanzia: anticipo, alloggio pagato, contratto più lungo, data di uscita", gate: false, kind: "liquidita", grp: "cond", optId: L.id });
   }
-  if ((o.impacts ?? []).some((i) => i.src === "ai")) open.push({ key: "ai", t: `Gli importi su soldi e tempo di ${L.name} sono confermati da te, non solo stimati dall'AI`, how: "Conferma o correggi gli importi al passo «Soldi e tempo»", gate: false, kind: "stimeAI", optId: L.id });
+  if ((o.impacts ?? []).some((i) => i.src === "ai")) open.push({ key: "ai", t: `Gli importi su soldi e tempo di ${L.name} sono confermati da te, non solo stimati dall'AI`, how: "Conferma o correggi gli importi al passo «Soldi e tempo»", gate: false, kind: "stimeAI", grp: "chiarire", optId: L.id });
   uo.filter((c) => !c.gate).forEach((c) => open.push(c));
+  for (const rk of riskViews(o, base, rules).filter((x) => x.p !== "bassa")) {
+    if (rk.breaks.length) open.push({ key: "rk" + rk.id, t: `Reggi il rischio «${rk.t}» (se succede: ${eur(rk.tot)}): oggi ti porterebbe oltre i tuoi limiti (${rk.breaks.join("; ")})`, how: rk.x ? `Riduci il rischio «${rk.t}»: ${rk.x}` : `Prepara un cuscinetto o una contromisura per «${rk.t}»`, gate: false, kind: "rischio", grp: "cond", optId: o.id });
+    else if (rk.p === "alta" && !rk.x) open.push({ key: "rx" + rk.id, t: `Rischio alto senza contromisura: «${rk.t}»${rk.tot ? ` (se succede: ${eur(rk.tot)})` : ""}`, how: `Decidi cosa faresti se succede «${rk.t}» e scrivilo nel registro dei rischi`, gate: false, kind: "rischio", grp: "chiarire", optId: o.id });
+  }
   const sol = solidity(dec, r);
-  if (sol && sol.estShare + sol.unkShare >= 50) open.push({ key: "basi", t: `Il punteggio di ${L.name} poggia su dati certi: oggi il ${sol.estShare + sol.unkShare}% viene da stime o valori senza fonte`, how: "Rendi certi i valori che pesano di più e indica da dove vengono", gate: false, kind: "basi", optId: L.id });
+  if (sol && sol.estShare + sol.unkShare >= 50) open.push({ key: "basi", t: `Il punteggio di ${L.name} poggia su dati certi: oggi il ${sol.estShare + sol.unkShare}% viene da stime o valori senza fonte`, how: "Rendi certi i valori che pesano di più e indica da dove vengono", gate: false, kind: "basi", grp: "chiarire", optId: L.id });
   const dop = biasChecks(dec, r).find((b) => b.k === "doppio");
-  if (dop) open.push({ key: "dop", t: "Ogni beneficio conta una volta sola", how: dop.t, gate: false, kind: "doppio" });
+  if (dop) open.push({ key: "dop", t: `Possibile doppio conteggio: ${dop.t}`, how: "Togli uno dei criteri che misurano la stessa cosa, o abbassane l'importanza", gate: false, kind: "doppio", grp: "chiarire" });
+  for (const x of dec.model.options) {
+    const od = oddScenario(x);
+    if (od && (x.id === L.id || x.id === fallback?.id))
+      open.push({ key: "sc" + x.id, t: `Lo scenario «se va male» di ${x.name} ipotizza ${od.sf} €/mese contro ${od.c} €/mese probabili: sembra un altro evento (es. perdere lo stipendio), non una variazione della stessa strada`, how: `Correggi «se va male» di ${x.name} al passo «Soldi e tempo» con una variazione realistica (es. affitto più alto); se temi di perdere il lavoro, rendilo una strada o un rischio a parte`, gate: false, kind: "scenario", grp: "chiarire", optId: x.id });
+  }
+  // un falso dilemma impedisce «Pronta»: la scelta migliore tra strade incomplete non è una decisione pronta
+  if (dilemma) open.push({ key: "dil", t: `Stai confrontando solo poche strade: ${dilemma.msg}`, how: `Aggiungi almeno una strada intermedia al passo «Strade» (${dilemma.sugg.map((x) => `«${x.name}»`).join(", ")}) oppure scarta esplicitamente quelle proposte`, gate: false, kind: "dilemma", grp: "chiarire" });
   return { state: open.length ? "non_pronta" : "pronta", lead: { id: L.id, name: L.name }, fallback, open, done, failed, dilemma };
 }
 
 /** Frase della regola di stop per una condizione che, se falsa, fa uscire la strada. */
-export const stopText = (rd: Ready) => `Se la risposta è no, ${rd.lead?.name} esce${rd.fallback ? ` e la scelta passa a ${rd.fallback.name}` : ""}: non serve approfondire oltre.`;
+export const stopText = (rd: Ready) => !rd.fallback
+  ? `Se la risposta è no, ${rd.lead?.name} esce: nessun'altra strada rispetta i requisiti, quindi va cercata una strada nuova.`
+  : rd.fallback.open.length
+  ? `Se la risposta è no, ${rd.lead?.name} esce e non serve approfondirla oltre. La prossima strada da valutare è ${rd.fallback.name}, che richiede ancora: ${rd.fallback.open.join("; ")}.`
+  : `Se la risposta è no, ${rd.lead?.name} esce e la scelta passa a ${rd.fallback.name}: non serve approfondire oltre.`;
+
+/** Frase sulla strada di riserva, prudente se anche lei ha verifiche vincolanti aperte. */
+export const fallbackText = (rd: Ready) => !rd.fallback ? "" : rd.fallback.open.length
+  ? `Se queste condizioni non si verificano, la prossima strada da valutare è ${rd.fallback.name}, che richiede ancora: ${rd.fallback.open.join("; ")}.`
+  : `Se queste condizioni non si verificano, la scelta passa a ${rd.fallback.name}.`;
+
+/* ---------- Scenari incoerenti: «se va male» che è un altro evento ---------- */
+/** Segnala una differenza mensile dove «se va male» cambia segno e si allontana molto dal probabile
+ *  (es. +2.000 probabile, −1.500 se va male): non è una variazione della stessa strada ma un altro evento. */
+export function oddScenario(o: Opt): { sf: number; c: number; fv: number; fix: number } | null {
+  const i = (o.impacts ?? []).find((x) => x.r === "cash_m" && Array.isArray(x.v));
+  if (!i) return null;
+  const [sf, c, fv] = i.v as [number, number, number];
+  if (c > 0 && sf < 0 && c - sf > Math.max(c * 0.6, 400)) return { sf, c, fv, fix: Math.round((c * 0.75) / 50) * 50 };
+  return null;
+}
+
+/* ---------- Registro dei rischi ---------- */
+export type RiskView = Risk & { tot: number; breaks: string[]; endAfter: number | null; auto: number | null };
+/** Impatto in € di un rischio se succede: una tantum + mensile × durata. */
+export const riskTotal = (r: Risk) => (r.c ?? 0) + (r.m ?? 0) * (r.m ? Math.max(1, r.d ?? 1) : 0);
+
+/** Per ogni rischio: impatto totale e se, sommato alla strada nello scenario probabile a 12 mesi, rompe i tuoi limiti. */
+export function riskViews(o: Opt, base: Resources = {}, rules: Rule[] = []): RiskView[] {
+  const map = new Map([[o.id, o]]);
+  const st = applyCombo([o.id], map, [], base, rules, 12, 1);
+  const hasCash = base.cash0 != null || base.cash_m != null || (o.impacts ?? []).some((i) => i.r === "cash0" || i.r === "cash_m");
+  return (o.risks ?? []).map((r) => {
+    const tot = riskTotal(r);
+    const endAfter = hasCash && st.res.cash_end != null ? st.res.cash_end + tot : null;
+    const breaks: string[] = [];
+    if (endAfter != null) for (const ru of rules) if (ru.r === "cash_end" && ru.min != null && endAfter < ru.min) breaks.push(`${ru.name}: a 12 mesi resteresti con ${eur(endAfter)}`);
+    // mesi di autonomia se l'impatto mensile del rischio si somma al flusso della strada
+    const flow = (st.res.cash_m ?? 0) + (r.m ?? 0);
+    const auto = hasCash && r.m && flow < 0 ? Math.max(0, Math.round((((st.res.cash0 ?? 0) + (r.c ?? 0)) / -flow) * 10) / 10) : null;
+    for (const ru of rules) if (ru.r === "autonomia_mesi" && ru.min != null && auto != null && auto < ru.min) breaks.push(`${ru.name}: reggeresti ${fmt(auto)} mesi`);
+    return { ...r, tot, breaks, endAfter, auto };
+  });
+}
+
+export type RiskSum = { id: string; name: string; n: number; alte: number; pesato: number; worst: RiskView | null; rompe: number; senzaRimedio: number };
+/** Confronto tra strade: numero di rischi, rischi alti, costo pesato (pesi convenzionali), rischio peggiore, quanti rompono i limiti. */
+export function riskSummary(dec: Decision, base: Resources = {}, rules: Rule[] = []): RiskSum[] {
+  return dec.model.options.map((o) => {
+    const v = riskViews(o, base, rules);
+    const worst = v.length ? v.reduce((a, b) => (b.tot < a.tot ? b : a)) : null;
+    return { id: o.id, name: o.name, n: v.length, alte: v.filter((r) => r.p === "alta").length,
+      pesato: Math.round(v.reduce((a, r) => a + RISK_W[r.p] * Math.min(0, r.tot), 0) / 50) * 50,
+      worst, rompe: v.filter((r) => r.breaks.length && r.p !== "bassa").length, senzaRimedio: v.filter((r) => r.p !== "bassa" && !r.x).length };
+  });
+}

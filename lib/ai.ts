@@ -1,5 +1,5 @@
 import { BP } from "./bp.ts";
-import { uid, LEVELS, levelOf, isMoneyCrit, redactMoney, normalize, type Decision, type DecResult, type Model, type Rel, type Resources, type Opt, type Phase, type PlanKind } from "./engine.ts";
+import { uid, LEVELS, levelOf, isMoneyCrit, redactMoney, normalize, type Decision, type DecResult, type Model, type Rel, type Resources, type Opt, type Phase, type PlanKind, type Risk } from "./engine.ts";
 
 export async function ai<T = unknown>(mode: string, payload: unknown): Promise<T> {
   const r = await fetch(`${BP}/api/ai`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode, payload }) });
@@ -58,13 +58,14 @@ export function compact(d: Decision, r: DecResult | undefined, opts: { eco: bool
 export type AiPlan = {
   n: string; kd?: string; p?: string[]; m?: string[];
   tl?: { h?: number; a?: string; t?: string }[]; nx?: string[]; cd?: { t?: string; h?: string; g?: boolean }[];
+  rk?: { t?: string; p?: string; c?: number; m?: number; d?: number; x?: string }[];
 };
 export type AiStrade = { x?: string; a?: AiPlan[] };
 
 const KD = ["base", "cond", "prova", "cerca"];
 const AR = ["soldi", "tempo", "famiglia", "lavoro", "casa", "progetti", "rischi"];
 /** Converte in modo difensivo la parte «piano» di una strada proposta dall'AI. Tutto resta marcato come proposto dall'AI. */
-export function planFromAi(o: Partial<AiPlan>): Pick<Opt, "kd" | "tl" | "next" | "cond"> {
+export function planFromAi(o: Partial<AiPlan>): Pick<Opt, "kd" | "tl" | "next" | "cond" | "risks"> {
   const tx = (v: unknown, n = 160) => (typeof v === "string" ? v.trim().slice(0, n) : "");
   const tl = arr<NonNullable<AiPlan["tl"]>[0]>(o.tl).filter((x) => x && tx(x.t)).slice(0, 8).map((x) => {
     const h = [1, 3, 6, 12].reduce((a, b) => (Math.abs(b - Number(x.h ?? 3)) < Math.abs(a - Number(x.h ?? 3)) ? b : a), 3);
@@ -73,7 +74,11 @@ export function planFromAi(o: Partial<AiPlan>): Pick<Opt, "kd" | "tl" | "next" |
   const next = arr<string>(o.nx).map((x) => tx(x, 140)).filter(Boolean).slice(0, 5);
   const cond = arr<NonNullable<AiPlan["cd"]>[0]>(o.cd).filter((x) => x && tx(x.t)).slice(0, 5).map((x) => ({
     id: uid(), t: tx(x.t), how: tx(x.h) || undefined, gate: x.g === true, st: "?" as const, src: "ai" as const }));
-  return { kd: (KD.includes(String(o.kd)) ? o.kd : "base") as PlanKind, ...(tl.length ? { tl } : {}), ...(next.length ? { next } : {}), ...(cond.length ? { cond } : {}) };
+  const num = (v: unknown, neg = true) => (typeof v === "number" && Number.isFinite(v) && v !== 0 ? (neg ? -Math.abs(v) : Math.abs(v)) : null);
+  const risks = arr<NonNullable<AiPlan["rk"]>[0]>(o.rk).filter((x) => x && tx(x.t)).slice(0, 5).map((x) => ({
+    id: uid(), t: tx(x.t), p: (["bassa", "media", "alta"].includes(String(x.p)) ? x.p : "media") as Risk["p"],
+    c: num(x.c), m: num(x.m), d: num(x.d, false), x: tx(x.x) || undefined, src: "ai" as const }));
+  return { kd: (KD.includes(String(o.kd)) ? o.kd : "base") as PlanKind, ...(tl.length ? { tl } : {}), ...(next.length ? { next } : {}), ...(cond.length ? { cond } : {}), ...(risks.length ? { risks } : {}) };
 }
 
 /** Unisce le strade proposte dall'AI al modello: completa quelle esistenti (solo dove vuote) e aggiunge le nuove. */
@@ -87,6 +92,7 @@ export function mergeStrade(m: Model, x: AiStrade): { model: Model; added: strin
       if (!ex.tl?.length && pl.tl) ex.tl = pl.tl;
       if (!ex.next?.length && pl.next) ex.next = pl.next;
       if (!ex.cond?.length && pl.cond) ex.cond = pl.cond;
+      if (!ex.risks?.length && pl.risks) ex.risks = pl.risks;
       if (!ex.kd) ex.kd = pl.kd;
     } else if (mm.options.length < 6) {
       const sh = (l?: string[]) => arr<string>(l).filter((t) => typeof t === "string" && t.trim()).slice(0, 4).map((t) => t.trim().slice(0, 140));

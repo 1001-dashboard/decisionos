@@ -7,8 +7,8 @@ import { useWs } from "@/components/Workspace";
 import { ScoreBars, LineChart, Legend, PAL } from "@/components/charts";
 import {
   analyzeDecision, biasChecks, conclusive, cashBreakpoint, cashSeries, crossEffects, eur, fmt, hashOf, normalize, solidity, tradeoff, turningPoints,
-  LEVELS, SCEN, type Scen, untestedText, infoValue, readiness, focus, stopText, PHASES, PHASE_L, PLAN_L } from "@/lib/engine";
-import { actionPlan, consequences, projection, valueText, HZ } from "@/lib/narrative";
+  LEVELS, SCEN, type Scen, untestedText, infoValue, readiness, focus, stopText, fallbackText, oddScenario, riskViews, riskSummary, PHASES, PHASE_L, PLAN_L } from "@/lib/engine";
+import { actionPlan, briefing, consequences, projection, valueText, HZ } from "@/lib/narrative";
 import { compact } from "@/lib/ai";
 import { PRI } from "@/lib/priorities";
 import { BP } from "@/lib/bp";
@@ -98,9 +98,16 @@ export default function Report() {
           <p className="rep-state">{rd.state === "pronta" ? "Pronta" : rd.state === "non_pronta" ? "Non ancora pronta" : rd.state === "nessuna" ? "Nessuna strada regge" : "Da impostare"}</p>
           {rd.state === "non_pronta" && rd.lead && (
             <>
-              <p className="big">«{rd.lead.name}» è potenzialmente la strada migliore per le priorità indicate, <b>ma solo se</b>:</p>
-              <ol className="rep-conds">{rd.open.map((c) => <li key={c.key}>{c.t}{c.gate ? <b> (vincolante)</b> : null}</li>)}</ol>
-              {rd.fallback && <p>Se queste condizioni non si verificano, la scelta cambia: allora prevale <b>{rd.fallback.name}</b>.</p>}
+              {rd.open.some((c) => c.grp === "cond") ? <>
+                <p className="big">«{rd.lead.name}» è potenzialmente la strada migliore per le priorità indicate, <b>ma solo se</b>:</p>
+                <div className="rep-cgrp">Condizioni perché la strada regga</div>
+                <ol className="rep-conds">{rd.open.filter((c) => c.grp === "cond").map((c) => <li key={c.key}>{c.t}{c.gate ? <b> (vincolante)</b> : null}</li>)}</ol>
+                {rd.fallback && <p>{fallbackText(rd)}</p>}
+              </> : <p className="big">«{rd.lead.name}» è in testa, ma l&apos;analisi non è ancora abbastanza affidabile per decidere.</p>}
+              {rd.open.some((c) => c.grp === "chiarire") && <>
+                <div className="rep-cgrp">Cose da chiarire prima di decidere</div>
+                <ul className="rep-conds">{rd.open.filter((c) => c.grp === "chiarire").map((c) => <li key={c.key}>{c.t}</li>)}</ul>
+              </>}
             </>
           )}
           {rd.state === "pronta" && rd.lead && <p className="big">Con i dati di oggi la strada che rispetta meglio le priorità indicate è <b>{rd.lead.name}</b>{rd.done.length ? ", con le sue condizioni verificate" : ""}. Nessun dato incerto può ribaltarla.</p>}
@@ -155,9 +162,16 @@ export default function Report() {
         {/* CONSEGUENZE NEL TEMPO */}
         <section className="rsec">
           <H t="Se scegli questa strada, cosa succede dopo" />
-          {!m.options.some((o) => (o.tl ?? []).length || (o.cond ?? []).length) ? <p className="muted">Le conseguenze nel tempo non sono ancora state descritte (passo «Conseguenze»).</p> : m.options.map((o, i) => (
+          {!m.options.some((o) => (o.tl ?? []).length || (o.cond ?? []).length) && <p className="muted">Le conseguenze nel tempo non sono ancora state descritte (passo «Conseguenze»).</p>}
+          {m.options.map((o, i) => { const b = briefing(d, res, o, R, rules); return (
             <div key={o.id} className="rep-alt">
-              <h3 style={{ margin: 0 }}><span className="optbadge sm" style={{ background: PAL[i % PAL.length] }}>{String.fromCharCode(65 + i)}</span> {o.name}{o.kd && o.kd !== "base" ? <small className="muted"> · {PLAN_L[o.kd]}</small> : null}</h3>
+              <h3 style={{ margin: 0 }}><span className="optbadge sm" style={{ background: PAL[i % PAL.length] }}>{String.fromCharCode(65 + i)}</span> Se scegli «{o.name}»{o.kd && o.kd !== "base" ? <small className="muted"> · {PLAN_L[o.kd]}</small> : null}</h3>
+              {(b.watch.length > 0 || b.plus.length > 0) && (
+                <div className="rep-grid2" style={{ marginTop: 6 }}>
+                  <div><b className="rep-con">Tieni conto di</b><ul>{b.watch.map((x, k) => <li key={k}>{x}</li>)}{!b.watch.length && <li className="muted">—</li>}</ul></div>
+                  <div><b className="rep-pro">Però hai anche</b><ul>{b.plus.map((x, k) => <li key={k}>{x}</li>)}{!b.plus.length && <li className="muted">—</li>}</ul></div>
+                </div>
+              )}
               {(o.tl ?? []).length > 0 && (
                 <div className="rep-tl">
                   {PHASES.map((h) => (
@@ -170,7 +184,35 @@ export default function Report() {
                 {(o.next ?? []).length > 0 && <div><b>Ti costringe a decidere poi</b><ul>{(o.next ?? []).map((x) => <li key={x}>{x}</li>)}</ul></div>}
               </div>
             </div>
-          ))}
+          ); })}
+        </section>
+
+        {/* RISCHI */}
+        <section className="rsec">
+          <H t="Rischi: cosa può andare storto e quanto costa" />
+          {!m.options.some((o) => (o.risks ?? []).length) ? <p className="muted">Nessun rischio indicato (passo «Conseguenze»). Senza registro dei rischi le strade sembrano più sicure di quanto sono.</p> : (
+            <>
+              <table className="rt">
+                <thead><tr><th>Strada</th><th>Rischi</th><th>Rischio peggiore, se succede</th><th>Costo pesato</th><th>Oltre i limiti</th></tr></thead>
+                <tbody>{riskSummary(d, R, rules).map((x) => (
+                  <tr key={x.id}><td><b>{x.name}</b></td><td>{x.n ? `${x.n}${x.alte ? ` (${x.alte} alti)` : ""}` : "nessuno indicato"}</td>
+                    <td>{x.worst ? `${x.worst.t}${x.worst.tot ? ` · ${eur(x.worst.tot)}` : ""}` : "—"}</td><td className="num">{x.n ? eur(x.pesato) : "—"}</td><td>{x.n ? (x.rompe ? `sì (${x.rompe})` : "no") : "—"}</td></tr>
+                ))}</tbody>
+              </table>
+              <p className="rep-note2">Costo pesato = somma degli impatti × peso convenzionale della probabilità (bassa 10%, media 30%, alta 60%): un ordine di grandezza per confrontare le strade, non una previsione.</p>
+              {m.options.filter((o) => (o.risks ?? []).length).map((o) => (
+                <div key={o.id} style={{ marginTop: 8 }}>
+                  <b>{o.name}</b>
+                  <ul className="rep-risks">{riskViews(o, R, rules).map((r) => (
+                    <li key={r.id} className={`p-${r.p}`}><span className="rp">{r.p}</span> <span><b>{r.t}</b>{r.src === "ai" ? <span className="aitag">AI</span> : null}
+                      {r.tot ? <> — se succede {eur(r.tot)}{r.endAfter != null ? `, a 12 mesi resteresti con ${eur(r.endAfter)}` : ""}</> : <span className="muted"> — impatto in € non indicato</span>}
+                      {r.breaks.length ? <><br /><small className="rep-stop">Oltre i tuoi limiti: {r.breaks.join("; ")}</small></> : null}
+                      {r.x ? <><br /><small>Contromisura: {r.x}</small></> : r.p !== "bassa" ? <><br /><small className="muted">Nessuna contromisura indicata</small></> : null}</span></li>
+                  ))}</ul>
+                </div>
+              ))}
+            </>
+          )}
         </section>
 
         {/* ALTERNATIVE */}
@@ -253,6 +295,7 @@ export default function Report() {
           {!hasMoney ? <p className="muted">Non sono stati indicati effetti su soldi e tempo: inseriscili nel passo «Soldi e tempo» per vedere gli scenari.</p> : (
             <>
               <p>Risparmi a fine periodo per ogni alternativa, nei tre scenari. Proiezione lineare (risparmi di oggi + differenza mensile × mesi), senza probabilità: «se va male» e «se va bene» sono ipotesi, non previsioni.</p>
+              {m.options.filter((o) => oddScenario(o)).map((o) => { const od = oddScenario(o)!; return <p key={o.id} className="rep-callout warn"><b>Attenzione su {o.name}:</b> «se va male» ({eur(od.sf)}/mese) è lontano dal probabile ({eur(od.c)}/mese) e cambia segno. Descrive un altro evento, come perdere lo stipendio, non la stessa strada andata peggio: la colonna «Se va male» di questa strada non è affidabile.</p>; })}
               {m.options.some((o) => (o.impacts ?? []).some((i) => i.src === "ai")) && <p className="rep-callout">Contiene importi stimati dall&apos;AI e non confermati ({m.options.filter((o) => (o.impacts ?? []).some((i) => i.src === "ai")).map((o) => `«${o.name}»`).join(", ")}): trattali come ipotesi da verificare.</p>}
               <table className="rt">
                 <thead><tr><th>Alternativa</th><th>Periodo</th>{SCEN.map((s) => <th key={s}>{SL[s]}</th>)}<th>Ore libere</th></tr></thead>
