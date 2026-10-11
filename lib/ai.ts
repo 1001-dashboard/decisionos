@@ -1,5 +1,5 @@
 import { BP } from "./bp.ts";
-import { uid, LEVELS, levelOf, isMoneyCrit, redactMoney, normalize, type Decision, type DecResult, type Model, type Rel, type Resources, type Opt, type PlanKind, type Risk, type Horizon, PHASE_SETS, snapPhase, phasesOf, areasOf } from "./engine.ts";
+import { uid, LEVELS, levelOf, isMoneyCrit, redactMoney, normalize, type Decision, type DecResult, type Model, type Rel, type Resources, type Opt, type PlanKind, type Risk, type Horizon, type Line, PHASE_SETS, snapPhase, phasesOf, areasOf, syncConti } from "./engine.ts";
 
 export async function ai<T = unknown>(mode: string, payload: unknown): Promise<T> {
   const r = await fetch(`${BP}/api/ai`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode, payload }) });
@@ -46,6 +46,7 @@ export function compact(d: Decision, r: DecResult | undefined, opts: { eco: bool
     })),
     i: (m.assumptions ?? []).map((a) => `${tx(a.t)} [${a.rel}${a.aff ? "," + a.aff : ""}]`),
     ...(m.tipo ? { k: m.tipo } : {}),
+    ...(m.scartate?.length ? { no: m.scartate.map((x) => `${tx(x.name)}${x.why ? ": " + tx(x.why) : ""}`) } : {}),
     // orizzonti e aree: inviati solo se già fissati, altrimenti l'Analista li propone
     ...(m.phases?.length || m.options.some((o) => o.tl?.length) ? { hz: { ph: phasesOf(m).map((x) => [x.h, x.l]), ar: areasOf(m) } } : {}),
     ...(r ? {
@@ -177,6 +178,56 @@ export function structToModel(x: AiStruct): { name: string; model: Model; questi
   return {
     name: typeof x.n === "string" && x.n ? x.n : "Nuova decisione",
     model: { criteria, constraints, options, assumptions, tipo, nota: typeof x.x === "string" && x.x ? x.x : undefined, ...hz },
-    questions: arr<string>(x.q).filter((q) => typeof q === "string").slice(0, 3), serve: !!x.serve,
+    questions: arr<string>(x.q).filter((q) => typeof q === "string").slice(0, 5), serve: !!x.serve,
+  };
+}
+
+/* ---------- Conti dall'Analista ---------- */
+type AiLine = { t?: string; k?: string; v?: number | null; lo?: number; hi?: number; u?: boolean; f?: string };
+export type AiConti = { q?: string[]; o?: AiLine[]; s?: { a?: string; l?: AiLine[]; x?: string[] }[] };
+
+const toLine = (l: AiLine): Line | null => {
+  if (!l || typeof l.t !== "string" || !l.t.trim()) return null;
+  const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.abs(v) : null);
+  return { id: uid(), t: l.t.trim().slice(0, 60), k: l.k === "e" ? "e" : "s", v: n(l.v), lo: n(l.lo), hi: n(l.hi), ...(l.u ? { u: true } : {}), f: l.f === "D" ? "D" : "S", src: "ai" };
+};
+
+/** Imposta i conti proposti dall'Analista senza toccare quello che hai già scritto: oggi (voci nuove per nome) e, per ogni strada senza conti,
+ *  copia di oggi − voci che spariscono + voci nuove o cambiate. Poi ricalcola le differenze. */
+export function contiFromAi(m: Model, x: AiConti): { model: Model; questions: string[] } {
+  const mm: Model = structuredClone(m);
+  // riempie solo gli importi vuoti: mai sovrascrivere un numero che c'è già
+  const fill = (dst: Line, src: Line) => { if (dst.v == null && src.v != null) { dst.v = src.v; dst.lo ??= src.lo; dst.hi ??= src.hi; dst.f = src.f; } };
+  const ai0 = arr<AiLine>(x.o).map(toLine).filter((l): l is Line => !!l);
+  for (const l of ai0) { const ex = (mm.oggi ?? []).find((y) => norm(y.t) === norm(l.t)); if (ex) fill(ex, l); }
+  const have = new Set((mm.oggi ?? []).map((l) => norm(l.t)));
+  mm.oggi = [...(mm.oggi ?? []), ...ai0.filter((l) => !have.has(norm(l.t)))].slice(0, 20);
+  for (const sx of arr<NonNullable<AiConti["s"]>[0]>(x.s)) {
+    const o = mm.options.find((y) => norm(y.name) === norm(sx?.a ?? ""));
+    if (!o) continue;
+    if (o.conti?.length) {
+      for (const l of arr<AiLine>(sx.l).map(toLine).filter((z): z is Line => !!z)) { const ex = o.conti.find((y) => norm(y.t) === norm(l.t)); if (ex) fill(ex, l); }
+      continue;
+    }
+    const gone = new Set(arr<string>(sx.x).map(norm));
+    const nl = arr<AiLine>(sx.l).map(toLine).filter((l): l is Line => !!l);
+    const changed = new Set(nl.map((l) => norm(l.t)));
+    const base = (mm.oggi ?? []).filter((l) => !gone.has(norm(l.t)) && !changed.has(norm(l.t))).map((l) => ({ ...l, id: uid(), from: l.id }));
+    o.conti = [...base, ...nl].slice(0, 25);
+  }
+  // le voci copiate da oggi seguono gli importi di oggi finché restano vuote
+  for (const o of mm.options) for (const l of o.conti ?? []) if (l.from && l.v == null) { const src = (mm.oggi ?? []).find((y) => y.id === l.from); if (src && src.v != null) { l.v = src.v; l.f = src.f; } }
+  return { model: syncConti(mm), questions: arr<string>(x.q).filter((q) => typeof q === "string" && q.trim()).slice(0, 6) };
+}
+
+/** Dati per la richiesta «conti»: senza consenso alle cifre, solo nomi delle voci. */
+export function contiPayload(d: Decision, eco: boolean, answers: string[] = []) {
+  const tx = (t?: string) => (t == null ? undefined : eco ? t : redactMoney(t));
+  const ln = (l: Line) => (eco && l.v != null ? `${l.t} ${l.k === "e" ? "+" : "-"}${l.v}${l.u ? " una tantum" : ""}` : `${l.t} (${l.k === "e" ? "entrata" : "spesa"})`);
+  return {
+    t: tx(d.descr), a: d.model.options.map((o) => o.name),
+    ...(d.model.oggi?.length ? { o: d.model.oggi.map(ln) } : {}),
+    ...(answers.length ? { r: answers.map((a) => tx(a)) } : {}),
+    ...(eco ? { eco: true } : { privacy: "importi oscurati: proponi solo le voci, v null" }),
   };
 }

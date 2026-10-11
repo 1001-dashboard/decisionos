@@ -4,20 +4,20 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Plus, Trash2, Snowflake, CheckCircle2, Bot, Check, AlertCircle, ArrowRight, ArrowLeft,
-  ArrowLeftRight, GitBranch, Sparkles, ListOrdered, Milestone, Lightbulb, StickyNote, Wallet, ChevronDown, TrendingUp, TrendingDown, ShieldAlert, Link2, Scale, Swords, RefreshCw, ThumbsUp, ThumbsDown, X, Brain, FileText,
+  ArrowLeftRight, GitBranch, Sparkles, Calculator, HelpCircle, ListOrdered, Milestone, Lightbulb, StickyNote, Wallet, ChevronDown, TrendingUp, TrendingDown, ShieldAlert, Link2, Scale, Swords, RefreshCw, ThumbsUp, ThumbsDown, X, Brain, FileText,
 } from "lucide-react";
 import { useWs } from "@/components/Workspace";
 import { ScoreBars } from "@/components/charts";
 import {
   analyzeDecision, applyCombo, combos, eur, fmt, normalize, turningPoints, uid, weightsFromImp, scaleNum, levelOf,
-  tradeoff, solidity, crossEffects, hashOf, biasChecks, conclusive, infoValue, readiness, focus, stopText, fallbackText, oddScenario, isStatusQuo, riskViews, riskSummary, customRes,
+  tradeoff, solidity, crossEffects, hashOf, biasChecks, conclusive, infoValue, readiness, focus, stopText, fallbackText, oddScenario, invertedScenario, isStatusQuo, contiDelta, saldo, syncConti, type Line, riskViews, riskSummary, customRes,
   type Resources, type Rule, type Risk,
   areasOf, phasesOf, snapPhase, PHASE_SETS, PLAN_L, PLAN_D, type Area, type Horizon, type Cond, type Dilemma as DilemmaT, type PlanKind, type Phase,
   LEVELS, type Crit, type Decision, type Impact, type Model, type Opt, type Rel, untestedText } from "@/lib/engine";
 import { CRIT_LIB } from "@/lib/templates";
 import { briefing } from "@/lib/narrative";
 import { impFor, priGap } from "@/lib/priorities";
-import { ai, compact, mergeStrade, type AiStrade } from "@/lib/ai";
+import { ai, compact, mergeStrade, contiFromAi, contiPayload, type AiStrade, type AiConti } from "@/lib/ai";
 
 const LVC = ["#c94040", "#e07b39", "#d9a521", "#7bb661", "#23906a"];
 const SRC: { k: Rel; l: string }[] = [{ k: "F", l: "Certo" }, { k: "D", l: "Me l'hanno detto" }, { k: "S", l: "Stima mia" }];
@@ -72,16 +72,29 @@ function PcList({ items, kind, onChange }: { items: string[]; kind: "pro" | "con
 }
 
 /** Strade mancanti: falso dilemma con proposte da aggiungere. */
-function Dilemma({ d, add }: { d: DilemmaT; add: (kd: PlanKind, name: string) => void }) {
+function Dilemma({ d, add, drop }: { d: DilemmaT; add: (kd: PlanKind, name: string) => void; drop: (kd: PlanKind, name: string, why: string) => void }) {
+  const [open, setOpen] = useState<PlanKind | null>(null);
+  const [why, setWhy] = useState("");
   return (
     <div className="card stack dilemma">
       <h3 style={{ margin: 0 }}><GitBranch size={18} /> Mancano strade</h3>
       <p style={{ margin: 0 }}>{d.msg}</p>
       <div className="stack" style={{ gap: 8 }}>
         {d.sugg.map((x) => (
-          <div key={x.kd} className="row between sugg" style={{ flexWrap: "nowrap", gap: 10 }}>
-            <span style={{ minWidth: 0 }}><b>{x.name}</b><br /><small>{x.why}</small></span>
-            <button className="btn sm" onClick={() => add(x.kd, x.name)}><Plus size={14} /> Aggiungi</button>
+          <div key={x.kd} className="sugg stack" style={{ gap: 8 }}>
+            <div className="row between" style={{ flexWrap: "nowrap", gap: 10 }}>
+              <span style={{ minWidth: 0 }}><b>{x.name}</b><br /><small>{x.why}</small></span>
+              <span className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+                <button className="btn sm" onClick={() => add(x.kd, x.name)}><Plus size={14} /> Aggiungi</button>
+                <button className="btn ghost sm" onClick={() => { setOpen(open === x.kd ? null : x.kd); setWhy(""); }}>Non perseguibile</button>
+              </span>
+            </div>
+            {open === x.kd && (
+              <div className="row" style={{ gap: 6 }}>
+                <input autoFocus aria-label="Perché non è perseguibile" placeholder="Perché? Es. già so che l'azienda non offre alloggio" value={why} onChange={(e) => setWhy(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { drop(x.kd, x.name, why); setOpen(null); } }} style={{ flex: "1 1 220px" }} />
+                <button className="btn sm pri" onClick={() => { drop(x.kd, x.name, why); setOpen(null); }}>Conferma</button>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -193,6 +206,59 @@ function Conseq({ o, i, setM, onNewDecision, base, rules, phs, ars }: { o: Opt; 
   );
 }
 
+/** Calcolatore: differenza mensile = entrate in più − spese in più, nei tre scenari. */
+function CmCalc({ onUse }: { onUse: (v: [number, number, number]) => void }) {
+  const [inc, setInc] = useState<number | null>(null);
+  const [sp, setSp] = useState<(number | null)[]>([null, null, null]);
+  const e = inc ?? 0, c = sp[1] ?? sp[0] ?? sp[2] ?? 0;
+  // se va male = spese più alte; se va bene = spese più basse (se non indicate, uguali al probabile)
+  const res: [number, number, number] = [e - (sp[0] ?? c), e - c, e - (sp[2] ?? c)];
+  const ready = inc != null || sp.some((x) => x != null);
+  return (
+    <div className="cmcalc stack">
+      <div><small>Entrate in più al mese (es. stipendio nuovo, al netto)</small><Num value={inc} w={110} suffix="€" onChange={setInc} /></div>
+      <div><small>Spese in più al mese (affitto, viaggi, asilo…), senza segno</small>
+        <div className="tri">{["Se va male", "Probabile", "Se va bene"].map((l, k) => <div key={l}><small>{l}</small><Num value={sp[k]} w={92} onChange={(v) => { const a = [...sp]; a[k] = v == null ? null : Math.abs(v); setSp(a); }} /></div>)}</div>
+      </div>
+      {ready && <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <small>Differenza al mese: <b>{eur(res[0])}</b> se va male · <b>{eur(res[1])}</b> probabile · <b>{eur(res[2])}</b> se va bene</small>
+        <button className="btn sm pri" onClick={() => onUse(res)}>Usa questi valori</button>
+      </div>}
+    </div>
+  );
+}
+
+/** Editor di voci dei conti (entrate e spese). */
+function ContiEditor({ lines, onChange, once }: { lines: Line[]; onChange: (l: Line[]) => void; once?: boolean }) {
+  const upd = (id: string, fn: (l: Line) => void) => onChange(lines.map((l) => { if (l.id !== id) return l; const n = { ...l }; fn(n); delete n.src; return n; }));
+  const [rng, setRng] = useState<Record<string, boolean>>({});
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      {lines.map((l) => (
+        <div key={l.id} className={`lrow ${l.k}`}>
+          <input aria-label="Voce" value={l.t} onChange={(e) => upd(l.id, (n) => { n.t = e.target.value; })} />
+          <select aria-label="Tipo voce" value={l.k} onChange={(e) => upd(l.id, (n) => { n.k = e.target.value as Line["k"]; })}><option value="e">Entrata</option><option value="s">Spesa</option></select>
+          <Num value={l.v ?? null} w={86} suffix="€" onChange={(v) => upd(l.id, (n) => { n.v = v == null ? null : Math.abs(v); if (n.f === "S" && l.src === "ai") n.f = "D"; })} />
+          <span className="lmeta">
+            <select aria-label="Fonte" value={l.f ?? "D"} onChange={(e) => upd(l.id, (n) => { n.f = e.target.value as Line["f"]; })}><option value="D">detto da me</option><option value="S">stima</option><option value="F">verificato</option></select>
+            {once && <label className="row" style={{ gap: 4, fontSize: 12 }}><input type="checkbox" checked={!!l.u} onChange={(e) => upd(l.id, (n) => { n.u = e.target.checked || undefined; })} /> una tantum</label>}
+            <button className="btn ghost sm" onClick={() => setRng({ ...rng, [l.id]: !rng[l.id] })}>{l.lo != null || l.hi != null ? "intervallo ✓" : "intervallo"}</button>
+            {l.src === "ai" && <span className="aitag" title="Proposta dall'Analista">AI</span>}
+            {l.from && <small className="muted">come oggi</small>}
+            <button className="iconbtn" aria-label="Togli voce" onClick={() => onChange(lines.filter((x) => x.id !== l.id))}><X size={13} /></button>
+          </span>
+          {rng[l.id] && <span className="lrng"><small>da</small><Num value={l.lo ?? null} w={80} onChange={(v) => upd(l.id, (n) => { n.lo = v == null ? null : Math.abs(v); })} /><small>a</small><Num value={l.hi ?? null} w={80} onChange={(v) => upd(l.id, (n) => { n.hi = v == null ? null : Math.abs(v); })} /><small>€ (per «se va male / se va bene»)</small></span>}
+          {l.v == null && <small className="lmiss">importo da inserire</small>}
+        </div>
+      ))}
+      <div className="row" style={{ gap: 6 }}>
+        <button className="btn sm" onClick={() => onChange([...lines, { id: uid(), t: "", k: "e", v: null, f: "D" }])}><Plus size={13} /> Entrata</button>
+        <button className="btn sm" onClick={() => onChange([...lines, { id: uid(), t: "", k: "s", v: null, f: "D" }])}><Plus size={13} /> Spesa</button>
+      </div>
+    </div>
+  );
+}
+
 const mid = (v: number | number[]) => (Array.isArray(v) ? v[v.length === 3 ? 1 : 0] : v);   // dati vecchi con intervallo su un campo a valore unico
 
 export default function DecisionPage() {
@@ -221,6 +287,9 @@ export default function DecisionPage() {
   const sol = useMemo(() => (d && res ? solidity(d, res) : null), [d, res]);
   const [crossOpt, setCrossOpt] = useState<string>("");
   const [newArea, setNewArea] = useState("");
+  const [cq, setCq] = useState<string[]>([]);
+  const [cans, setCans] = useState<string[]>([]);
+  const [ceco, setCeco] = useState<boolean | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiErr, setAiErr] = useState("");
   const others = useMemo(() => ws.decisions.filter((x) => x.status === "aperta" && x.id !== id && x.model.options.length), [ws.decisions, id]);
@@ -338,6 +407,21 @@ export default function DecisionPage() {
   function addPlan(kd: PlanKind, name: string) {
     setM((mm) => { if (mm.options.length < 5) mm.options.push({ id: uid(), name, kd, s: {} }); });
   }
+  const setOggi = (ls: Line[]) => setM((mm) => { mm.oggi = ls; syncConti(mm); });
+  const setConti = (oid: string, ls: Line[] | undefined) => setM((mm) => { const o = opt(mm, oid); if (ls) o.conti = ls; else { delete o.conti; o.impacts = (o.impacts ?? []).filter((x) => x.src !== "conti"); } syncConti(mm); });
+  const eco = ceco ?? ws.profile.ai_share.economia;
+  async function runConti(withAns: boolean) {
+    setAiBusy(true); setAiErr("");
+    try {
+      const ansT = withAns ? cq.map((q, i) => (cans[i]?.trim() ? `${q} ${cans[i].trim()}` : "")).filter(Boolean) : [];
+      const x = await ai<AiConti>("conti", contiPayload(d!, eco, ansT));
+      const r = contiFromAi(d!.model, x);
+      upd({ ...d!, model: r.model }); setCq(r.questions); setCans([]);
+    } catch (e) { setAiErr((e as Error).message); } finally { setAiBusy(false); }
+  }
+  function dropPlan(kd: PlanKind, name: string, why: string) {
+    setM((mm) => { mm.scartate = [...(mm.scartate ?? []).filter((x) => x.kd !== kd), { kd, name, ...(why.trim() ? { why: why.trim() } : {}), at: new Date().toISOString() }]; });
+  }
   async function newDecision(name: string) {
     const nid = await ws.createDecision({ name, descr: `Nata da «${d!.name}».` });
     if (nid) alert(`Creata la decisione «${name}»: la trovi in Decisioni.`);
@@ -429,7 +513,15 @@ export default function DecisionPage() {
         <section className="stack">
           <h2 className="sh">Quali strade hai davanti?</h2>
           <Hint>Le scelte vere quasi mai sono «sì o no». Oltre alla strada diretta pensa a una strada <b>condizionata</b> (solo se…), <b>sperimentale</b> (in prova, in piccolo, un pilota), <b>temporanea</b>, <b>rinviata</b> (quando avrai più informazioni) o a un&apos;<b>alternativa</b> da cercare. Negoziare non è una strada a parte: è il primo passo del piano, lo trovi alla fine.</Hint>
-          {dilemma && <Dilemma d={dilemma} add={addPlan} />}
+          {dilemma && <Dilemma d={dilemma} add={addPlan} drop={dropPlan} />}
+          {(m.scartate ?? []).length > 0 && (
+            <div className="note" style={{ fontSize: 14 }}>
+              <b>Strade considerate e scartate:</b>
+              <ul className="clean" style={{ margin: "4px 0 0" }}>{m.scartate!.map((x, k) => (
+                <li key={k}>{x.name}{x.why ? <> — <i>{x.why}</i></> : <span className="muted"> — nessun motivo indicato</span>} <button className="btn ghost sm" onClick={() => setM((mm) => { mm.scartate = (mm.scartate ?? []).filter((_, j) => j !== k); })}>Ripristina</button></li>
+              ))}</ul>
+            </div>
+          )}
           <div className="grid g3">
             {m.options.map((o, i) => (
               <div key={o.id} className="card stack">
@@ -648,6 +740,61 @@ export default function DecisionPage() {
             <span><Wallet size={15} /> Oggi: risparmi <b>{eur(R.cash0 ?? 0)}</b> · restano <b>{eur(R.cash_m ?? 0)}</b> al mese · <b>{fmt(R.hours_w ?? 0)}</b> ore libere a settimana{noBase ? ". Imposta prima la tua situazione di partenza." : ""}</span>
             <Link href="/app/impostazioni" className="btn sm">Modifica</Link>
           </div>
+          {(m.oggi ?? []).some((l) => l.v != null) && Math.round(saldo(m.oggi ?? [])[1]) !== Math.round(R.cash_m ?? 0) && (
+            <div className="note warn row between" style={{ fontSize: 13 }}>
+              <span>I tuoi conti di oggi dicono <b>{eur(saldo(m.oggi ?? [])[1])}</b> al mese, il profilo <b>{eur(R.cash_m ?? 0)}</b>: le proiezioni usano il profilo.</span>
+              <button className="btn sm" onClick={() => ws.saveProfile({ ...ws.profile, resources: { ...ws.profile.resources, cash_m: Math.round(saldo(m.oggi ?? [])[1]) } })}>Usa {eur(saldo(m.oggi ?? [])[1])} nel profilo</button>
+            </div>
+          )}
+          <div className="card stack conti">
+            <h3 style={{ margin: 0 }}><Calculator size={18} /> I conti</h3>
+            <small>Scrivi come stai <b>oggi</b>, al mese: entrate e spese reali (es. sussidio, spesa di casa; se la casa è tua, nessun affitto). Ogni strada parte da una copia e cambi solo ciò che cambia davvero. La differenza mensile la calcola Decision OS, non l&apos;AI.</small>
+            <div className="contigrid">
+              <div className="stack" style={{ gap: 6 }}>
+                <b>Oggi, al mese</b>
+                <ContiEditor lines={m.oggi ?? []} onChange={setOggi} />
+                <small>Saldo di oggi: <b>{eur(saldo(m.oggi ?? [])[1])}</b> al mese</small>
+              </div>
+              <div className="stack aibox" style={{ gap: 8, padding: 12, borderRadius: 12 }}>
+                <b className="row" style={{ gap: 6 }}><Bot size={16} /> L&apos;Analista imposta i conti</b>
+                <small>Ti fa domande sui numeri che mancano e propone le voci, partendo da quello che hai detto. Non aggiunge costi che non hai: completa solo ciò che è vuoto.</small>
+                <label className="row" style={{ gap: 6, fontSize: 13 }}><input type="checkbox" checked={eco} onChange={(e) => setCeco(e.target.checked)} /> Includi le cifre in questa richiesta</label>
+                {!eco && <small className="muted">Senza cifre propone solo le voci: gli importi li metti tu.</small>}
+                <button className="btn" disabled={aiBusy} onClick={() => runConti(false)}><Sparkles size={15} /> {aiBusy ? "L'Analista sta ragionando…" : "Imposta i conti"}</button>
+                {cq.length > 0 && (
+                  <div className="stack qbox" style={{ gap: 6 }}>
+                    <strong className="row" style={{ gap: 6 }}><HelpCircle size={15} /> Per fare i conti mi servono</strong>
+                    {cq.map((q, i) => <div key={q}><label className="f">{q}</label><input value={cans[i] ?? ""} onChange={(e) => { const a = [...cans]; a[i] = e.target.value; setCans(a); }} /></div>)}
+                    <button className="btn sm" disabled={aiBusy || !cans.some((a) => a?.trim())} onClick={() => runConti(true)}><RefreshCw size={14} /> Aggiorna i conti con le risposte</button>
+                  </div>
+                )}
+                {aiErr && <div className="err">{aiErr}</div>}
+              </div>
+            </div>
+            {m.options.map((o, i) => {
+              const cd = contiDelta(o, m.oggi ?? []);
+              return (
+                <details key={o.id} className="contiopt" open={!!o.conti?.length}>
+                  <summary><span className="optbadge sm" style={{ background: OPC[i % OPC.length] }}>{String.fromCharCode(65 + i)}</span> Conti con «{o.name || "(senza nome)"}»{cd ? <> · <b>{cd.delta[1] >= 0 ? "+" : ""}{eur(cd.delta[1])}/mese</b> rispetto a oggi</> : null}</summary>
+                  {!o.conti?.length ? (
+                    <div className="row" style={{ gap: 6, marginTop: 8 }}>
+                      <button className="btn sm" onClick={() => setConti(o.id, (m.oggi ?? []).map((l) => ({ ...l, id: uid(), from: l.id })))}><Plus size={13} /> Parti dai conti di oggi</button>
+                      <small className="muted">poi togli ciò che sparisce e aggiungi ciò che arriva</small>
+                    </div>
+                  ) : (
+                    <div className="stack" style={{ gap: 8, marginTop: 8 }}>
+                      <ContiEditor lines={o.conti} onChange={(ls) => setConti(o.id, ls)} once />
+                      {cd && <div className="note" style={{ fontSize: 13 }}>
+                        Saldo con questa strada: <b>{eur(cd.strada[1])}</b>/mese, oggi <b>{eur(cd.oggi)}</b> → differenza <b>{cd.delta[1] >= 0 ? "+" : ""}{eur(cd.delta[1])}</b>/mese (se va male {eur(cd.delta[0])}, se va bene {eur(cd.delta[2])}){cd.once ? <>; una tantum <b>{eur(cd.once)}</b></> : null}.
+                        {cd.missing.length > 0 && <div className="err">Mancano importi: {cd.missing.join(", ")}. Finché mancano, valgono 0.</div>}
+                      </div>}
+                      <button className="btn ghost sm" style={{ alignSelf: "flex-start" }} onClick={() => confirm("Togliere i conti di questa strada? Torni a inserire la differenza a mano.") && setConti(o.id, undefined)}>Togli i conti di questa strada</button>
+                    </div>
+                  )}
+                </details>
+              );
+            })}
+          </div>
           <Hint>Indica le <b>differenze rispetto a oggi</b> per ogni alternativa. Così Decision OS calcola quanti mesi reggi e cosa succede se va peggio del previsto. Per il mensile: <b>+</b> se a fine mese ti resta di più, <b>−</b> se ti resta di meno.</Hint>
           <div className="grid g3" style={{ alignItems: "start" }}>
             {m.options.map((o, i) => {
@@ -681,6 +828,17 @@ export default function DecisionPage() {
                       {["Se va male", "Probabile", "Se va bene"].map((l, k) => <div key={l}><small>{l}</small><Num value={cmv[k]} w={92} onChange={(v) => setCm(k, v)} /></div>)}
                     </div>
                     <small>In €/mese: quanto entra in più (o esce in più) ogni mese con questa scelta, rispetto a oggi. «Se va male» è la stessa strada con costi più alti o entrate più basse, non un altro evento. Es. rata di 250 € → −250.</small>
+                    {cm?.src === "conti" && <small className="ok-t">Calcolata dai conti qui sopra: per cambiarla modifica le voci.</small>}
+                    <details className="cmd"><summary>Calcola da entrate e spese</summary><CmCalc onUse={(v) => setImpact(o.id, "cash_m", v)} /></details>
+                    {(() => { const iv = invertedScenario(o); return iv ? (
+                      <div className="note warn" style={{ fontSize: 13, marginTop: 6 }}>
+                        «Se va male» ({eur(iv.sf)}) è migliore di «se va bene» ({eur(iv.fv)}): sembrano <b>spese scritte senza il segno −</b>. Così i conti dicono che ci guadagni.
+                        <div className="row" style={{ gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                          <button className="btn sm" onClick={() => setImpact(o.id, "cash_m", [-iv.sf, -iv.c, -iv.fv])}>Sono spese: metti il −</button>
+                          <button className="btn sm ghost" onClick={() => setImpact(o.id, "cash_m", [iv.fv, iv.c, iv.sf])}>Ho invertito l&apos;ordine</button>
+                        </div>
+                        <small style={{ display: "block", marginTop: 4 }}>Se con questa scelta hai anche un&apos;entrata (es. lo stipendio), usa «Calcola da entrate e spese»: la differenza giusta è entrate meno spese.</small>
+                      </div>) : null; })()}
                     {(() => { const od = oddScenario(o); return od ? (
                       <div className="note warn" style={{ fontSize: 13, marginTop: 6 }}>
                         «Se va male» ({eur(od.sf)}) è lontano dal probabile ({eur(od.c)}) e cambia segno: così descrive un altro evento, come perdere lo stipendio, non la stessa strada andata peggio. Gli scenari diventano fuorvianti.
@@ -700,6 +858,7 @@ export default function DecisionPage() {
                   {(c0 || cm) && (
                     <div className="note" style={{ fontSize: 13 }}>
                       Tra 12 mesi (scenario probabile): <b>{eur(sim.res.cash_end ?? 0)}</b> di risparmi
+                      <span className="muted"> = oggi {eur(R.cash0 ?? 0)}{c0 ? ` ${mid(c0.v) < 0 ? "−" : "+"} ${eur(Math.abs(mid(c0.v)))} iniziali` : ""} {(sim.res.cash_m ?? 0) < 0 ? "−" : "+"} 12 × {eur(Math.abs(sim.res.cash_m ?? 0))}/mese</span>
                       {sim.res.autonomia_mesi !== Infinity ? <>, reggi <b>{fmt(sim.res.autonomia_mesi)}</b> mesi</> : null}.
                       {sim.viol.length ? <div className="err">⚠ {sim.viol.join("; ")}</div> : null}
                     </div>
@@ -716,7 +875,7 @@ export default function DecisionPage() {
       {/* ---------- 5. RISULTATO ---------- */}
       {S === 5 && (
         <section className="stack">
-          {dilemma && <Dilemma d={dilemma} add={(kd, n) => { addPlan(kd, n); setStep(1); window.scrollTo({ top: 0 }); }} />}
+          {dilemma && <Dilemma d={dilemma} add={(kd, n) => { addPlan(kd, n); setStep(1); window.scrollTo({ top: 0 }); }} drop={dropPlan} />}
           <div className={`card stack ready ${ready.state}`}>
             <div className="rk">Decisione</div>
             <h2 style={{ margin: 0 }}>{ready.state === "pronta" ? "Pronta" : ready.state === "non_pronta" ? "Non ancora pronta" : ready.state === "nessuna" ? "Nessuna strada regge" : "Da impostare"}</h2>

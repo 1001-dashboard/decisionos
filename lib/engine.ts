@@ -9,7 +9,10 @@ export type Crit = {
 };
 export type Constraint = { id: string; name: string; crit: string; min?: number | null; max?: number | null };
 /** src: chi ha messo il valore. "ai" = stima dell'Analista non ancora confermata da te. */
-export type Impact = { r: string; v: number | [number, number, number]; tag?: string; src?: "ai" | "user" };
+export type Impact = { r: string; v: number | [number, number, number]; tag?: string; src?: "ai" | "user" | "conti" };
+/** Voce dei conti. k: e = entrata, s = spesa. v = importo probabile (positivo); lo/hi = caso peggiore/migliore (facoltativi).
+ *  u: true = una tantum. f: D = detto da te, S = stima (AI o tua), F = verificato. from = voce copiata dai conti di oggi. */
+export type Line = { id: string; t: string; k: "e" | "s"; v?: number | null; lo?: number | null; hi?: number | null; u?: boolean; f?: "D" | "S" | "F"; src?: "ai" | "user"; from?: string; note?: string };
 export type Meta = { why?: string; rel?: Rel; src?: string; dt?: string };
 /** Una tappa di «cosa succede dopo» se scegli questa strada. h = mesi (1 = entro 30 giorni). */
 /** Area di una conseguenza: libera, proposta per tipo di scelta (soldi, clienti, salute…). */
@@ -62,6 +65,7 @@ export type Opt = {
   next?: string[];   // decisioni che questa strada ti costringe a prendere dopo
   cond?: Cond[];     // cosa deve essere vero
   risks?: Risk[];    // cosa può andare storto, con impatto
+  conti?: Line[];    // bilancio mensile con questa strada (parte da una copia di quello di oggi)
   pro?: string[]; con?: string[];   // pro e contro a parole (spunti da verificare)
   s: Record<string, number>;
   raw?: Record<string, number>;
@@ -75,6 +79,10 @@ export type Model = {
   criteria: Crit[]; constraints: Constraint[]; options: Opt[]; assumptions?: Assumption[];
   ai?: { contro?: AiNote; strade?: { at: string; h: string; x?: string } };
   phases?: Horizon[];   // orizzonti di questa decisione (se assenti: preset per tipo)
+  /** strade proposte e scartate da te come non perseguibili, con il motivo: contano come «considerate» */
+  scartate?: { kd: PlanKind; name: string; why?: string; at: string }[];
+  /** il tuo bilancio di oggi, al mese: punto di partenza dei conti di ogni strada */
+  oggi?: Line[];
   areas?: Area[];       // aree delle conseguenze (se assenti: preset per tipo)
   tipo?: string;   // tipo di scelta riconosciuto (lavoro, casa, morale…)
   nota?: string;   // cosa conta poco in questa scelta, secondo l'Analista
@@ -714,7 +722,8 @@ export const isStatusQuo = (o: Opt) => o.kd === "sq" || SQ.test(o.name);
 export function falseDilemma(dec: Decision): Dilemma | null {
   const opts = dec.model.options;
   if (!opts.length) return null;
-  const has = (k: PlanKind) => opts.some((o) => o.kd === k || (k === "prova" && o.kd === "temp") || (k === "cerca" && o.kd === "rinvio"));
+  const gone = new Set((dec.model.scartate ?? []).map((x) => x.kd));
+  const has = (k: PlanKind) => gone.has(k) || opts.some((o) => o.kd === k || (k === "prova" && o.kd === "temp") || (k === "cerca" && o.kd === "rinvio"));
   const sq = opts.some(isStatusQuo);
   const L = (opts.find((o) => !isStatusQuo(o) && (!o.kd || o.kd === "base")) ?? opts[0]).name;
   const sugg: Dilemma["sugg"] = [];
@@ -780,6 +789,8 @@ export function readiness(dec: Decision, r: DecResult, base: Resources = {}, rul
     const sf = applyCombo([L.id], map, [], base, rules, 12, 0);
     if (sf.viol.length) open.push({ key: "liq", t: `Se va male, entro 12 mesi superi i tuoi limiti (${sf.viol.join("; ")}): perché la strada regga serve un cuscinetto o una garanzia`, how: "Prevedi un cuscinetto o una garanzia: anticipo, alloggio pagato, contratto più lungo, data di uscita", gate: false, kind: "liquidita", grp: "cond", optId: L.id });
   }
+  const cd = contiDelta(o, dec.model.oggi ?? []);
+  if (cd && (cd.missing.length || cd.stime)) open.push({ key: "conti", t: `Nei conti di ${L.name} ${cd.missing.length ? `mancano ${cd.missing.length} importi (${cd.missing.slice(0, 3).join(", ")})` : ""}${cd.missing.length && cd.stime ? " e " : ""}${cd.stime ? `${cd.stime} voci sono stime` : ""}: la differenza mensile non è ancora affidabile`, how: `Completa e verifica i conti di ${L.name} al passo «Soldi e tempo»`, gate: false, kind: "stimeAI", grp: "chiarire", optId: L.id });
   if ((o.impacts ?? []).some((i) => i.src === "ai")) open.push({ key: "ai", t: `Gli importi su soldi e tempo di ${L.name} sono confermati da te, non solo stimati dall'AI`, how: "Conferma o correggi gli importi al passo «Soldi e tempo»", gate: false, kind: "stimeAI", grp: "chiarire", optId: L.id });
   uo.filter((c) => !c.gate).forEach((c) => open.push(c));
   for (const rk of riskViews(o, base, rules).filter((x) => x.p !== "bassa")) {
@@ -790,6 +801,11 @@ export function readiness(dec: Decision, r: DecResult, base: Resources = {}, rul
   if (sol && sol.estShare + sol.unkShare >= 50) open.push({ key: "basi", t: `Il punteggio di ${L.name} poggia su dati certi: oggi il ${sol.estShare + sol.unkShare}% viene da stime o valori senza fonte`, how: "Rendi certi i valori che pesano di più e indica da dove vengono", gate: false, kind: "basi", grp: "chiarire", optId: L.id });
   const dop = biasChecks(dec, r).find((b) => b.k === "doppio");
   if (dop) open.push({ key: "dop", t: `Possibile doppio conteggio: ${dop.t}`, how: "Togli uno dei criteri che misurano la stessa cosa, o abbassane l'importanza", gate: false, kind: "doppio", grp: "chiarire" });
+  for (const x of dec.model.options) {
+    const iv = invertedScenario(x);
+    if (iv && (x.id === L.id || x.id === fallback?.id))
+      open.push({ key: "iv" + x.id, t: `Per ${x.name} «se va male» (${iv.sf} €/mese) è migliore di «se va bene» (${iv.fv} €/mese): probabilmente sono spese scritte senza il segno −, e i conti sui soldi sono rovesciati`, how: `Correggi la differenza mensile di ${x.name} al passo «Soldi e tempo»: le spese vanno col segno −, e va messa anche l'entrata (es. stipendio)`, gate: false, kind: "scenario", grp: "chiarire", optId: x.id });
+  }
   for (const x of dec.model.options) {
     const od = oddScenario(x);
     if (od && (x.id === L.id || x.id === fallback?.id))
@@ -856,4 +872,46 @@ export function riskSummary(dec: Decision, base: Resources = {}, rules: Rule[] =
       pesato: Math.round(v.reduce((a, r) => a + RISK_W[r.p] * Math.min(0, r.tot), 0) / 50) * 50,
       worst, rompe: v.filter((r) => r.breaks.length && r.p !== "bassa").length, senzaRimedio: v.filter((r) => r.p !== "bassa" && !r.x).length };
   });
+}
+
+/** «Se va male» migliore di «se va bene» (es. 4.000 / 3.000 / 2.500): quasi sempre spese scritte senza il segno −, o ordine invertito. */
+export function invertedScenario(o: Opt): { sf: number; c: number; fv: number } | null {
+  const i = (o.impacts ?? []).find((x) => x.r === "cash_m" && Array.isArray(x.v));
+  if (!i) return null;
+  const [sf, c, fv] = i.v as [number, number, number];
+  return sf > fv ? { sf, c, fv } : null;
+}
+
+/* ---------- Conti: bilancio di oggi e per strada → differenza calcolata ---------- */
+/** Valore di una voce in uno scenario (0 sfavorevole, 1 probabile, 2 favorevole): per le spese il peggio è il valore più alto, per le entrate il più basso. */
+export function lineVal(l: Line, k: number): number {
+  const v = Math.abs(l.v ?? 0);
+  const worst = l.k === "s" ? Math.max(v, Math.abs(l.hi ?? l.lo ?? v)) : Math.min(v, Math.abs(l.lo ?? l.hi ?? v));
+  const best = l.k === "s" ? Math.min(v, Math.abs(l.lo ?? l.hi ?? v)) : Math.max(v, Math.abs(l.hi ?? l.lo ?? v));
+  const x = k === 0 ? worst : k === 2 ? best : v;
+  return l.k === "e" ? x : -x;
+}
+/** Saldo mensile di un insieme di voci, nei tre scenari (solo voci mensili). */
+export const saldo = (ls: Line[] = []): [number, number, number] =>
+  [0, 1, 2].map((k) => ls.filter((l) => !l.u).reduce((a, l) => a + lineVal(l, k), 0)) as [number, number, number];
+export type ContiRes = { oggi: number; strada: [number, number, number]; delta: [number, number, number]; once: number; missing: string[]; stime: number };
+/** Differenza rispetto a oggi calcolata dai conti: saldo con la strada − saldo di oggi; una tantum a parte. */
+export function contiDelta(o: Opt, oggi: Line[] = []): ContiRes | null {
+  if (!o.conti?.length) return null;
+  const s0 = saldo(oggi)[1];
+  const st = saldo(o.conti);
+  const once = o.conti.filter((l) => l.u).reduce((a, l) => a + lineVal(l, 1), 0);
+  const missing = [...oggi, ...o.conti].filter((l) => l.v == null).map((l) => l.t);
+  return { oggi: s0, strada: st, delta: st.map((x) => Math.round(x - s0)) as [number, number, number], once: Math.round(once), missing, stime: o.conti.filter((l) => l.f === "S").length };
+}
+/** Riporta negli impatti la differenza calcolata dai conti (sostituisce i valori a mano su mensile e spesa iniziale). */
+export function syncConti(m: Model): Model {
+  for (const o of m.options) {
+    const c = contiDelta(o, m.oggi ?? []);
+    if (!c) continue;
+    o.impacts = (o.impacts ?? []).filter((i) => i.r !== "cash_m" && !(i.r === "cash0" && i.src === "conti"));
+    o.impacts.push({ r: "cash_m", v: c.delta, src: "conti" });
+    if (c.once) { o.impacts = o.impacts.filter((i) => i.r !== "cash0"); o.impacts.push({ r: "cash0", v: c.once, src: "conti" }); }
+  }
+  return m;
 }

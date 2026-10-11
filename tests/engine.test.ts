@@ -422,7 +422,7 @@ console.log("engine: 10/10 ok");
   const fz = sTM(cases[1][1] as never).model.options[0].tl![0];
   assert.ok(fz.h === 3 && fz.a === "sla", JSON.stringify(fz));   // tappa agganciata all'orizzonte più vicino della decisione
   // 40. risorse definite dall'utente: personale disponibile ≥ 4, una strada ne consuma 2
-  const hr: Decision = { id: "h", name: "Assunzioni", status: "aperta", imp: 1, tipo: "persona" as never, model: { tipo: "persona", criteria: [{ id: "p", name: "Competenze", w: 0, imp: 3, kind: "g" }], constraints: [],
+  const hr: Decision = { id: "h", name: "Assunzioni", status: "aperta", imp: 1, model: { tipo: "persona", criteria: [{ id: "p", name: "Competenze", w: 0, imp: 3, kind: "g" }], constraints: [],
     options: [{ id: "a", name: "Sposto 2 persone sul progetto", kd: "base", s: { p: 100 }, m: { p: { rel: "F" } }, impacts: [{ r: "x_pers", v: -2 }] },
       { id: "b", name: "Assumo un esterno", kd: "base", s: { p: 50 }, m: { p: { rel: "F" } } }, { id: "c", name: "Pilota con 1 persona", kd: "prova", s: { p: 75 }, m: { p: { rel: "F" } }, impacts: [{ r: "x_pers", v: -1 }] }, { id: "d", name: "Rimando", kd: "rinvio", s: { p: 25 }, m: { p: { rel: "F" } } }] } };
   const hrR = E.readiness(hr, E.analyzeDecision(hr), { x_pers: 5 }, [{ id: "q", name: "Personale operativo minimo", r: "x_pers", min: 4 }]);
@@ -437,4 +437,58 @@ console.log("engine: 10/10 ok");
   g2.model.options.push({ id: "c", name: "Senior a tempo", kd: "temp", s: {} }, { id: "d", name: "Senior solo se budget", kd: "cond", s: {} }, { id: "e", name: "Cerco altro profilo", kd: "cerca", s: {} });
   assert.equal(E.falseDilemma(g2), null);
   console.log("engine: dominio come input (5 decisioni diverse, risorse tue, strategie) ok");
+  // 42. strada proposta scartata come non perseguibile: conta come considerata
+  const sc: Decision = { id: "s", name: "s", status: "aperta", imp: 1, model: { criteria: [{ id: "p", name: "P", w: 0, imp: 3, kind: "g" }], constraints: [],
+    options: [{ id: "a", name: "Accettare proposta Ibiza", s: { p: 75 }, m: { p: { rel: "F" } } }, { id: "b", name: "Resto dove sono", s: { p: 25 }, m: { p: { rel: "F" } } }] } };
+  assert.equal(E.falseDilemma(sc)!.sugg.length, 3);
+  sc.model.scartate = [{ kd: "cond", name: "Ibiza solo a condizioni", why: "già so che l'azienda non offre alloggio", at: "2026-10-11" }];
+  assert.ok(E.falseDilemma(sc)!.sugg.every((x) => x.kd !== "cond"));
+  sc.model.scartate.push({ kd: "prova", name: "Ibiza in prova", at: "2026-10-11" });
+  assert.equal(E.falseDilemma(sc), null);   // resta una sola proposta: le altre le hai considerate tu
+  assert.ok(!E.readiness(sc, E.analyzeDecision(sc)).open.some((c) => c.kind === "dilemma"));
+  console.log("engine: strade scartate come non perseguibili ok");
+  // 43. spese scritte come positive (4.000 / 3.000 / 2.500): segnalate, anche nella decisione
+  const sp = { id: "z", name: "Accettare proposta Ibiza", s: { p: 75 }, m: { p: { rel: "F" as const } }, impacts: [{ r: "cash0", v: -3000 }, { r: "cash_m", v: [4000, 3000, 2500] as [number, number, number] }] };
+  assert.ok(E.invertedScenario(sp) && !E.invertedScenario({ ...sp, impacts: [{ r: "cash_m", v: [-4000, -3000, -2500] }] }) && !E.invertedScenario({ ...sp, impacts: [{ r: "cash_m", v: [-600, 0, 500] }] }));
+  const spD: Decision = { id: "sp", name: "sp", status: "aperta", imp: 1, model: { criteria: [{ id: "p", name: "P", w: 0, imp: 3, kind: "g" }], constraints: [], options: [sp, { id: "b", name: "Status quo", kd: "sq", s: { p: 25 }, m: { p: { rel: "F" } } }] } };
+  assert.ok(E.readiness(spD, E.analyzeDecision(spD)).open.some((c) => c.key === "ivz" && c.t.includes("segno")));
+  console.log("engine: spese senza segno segnalate ok");
+  // 44. conti: oggi NASpI +1.100, spesa famiglia −1.200, casa di proprietà 0; con Ibiza NASpI sparisce, stipendio +2.400, affitto −1.450 (1.300–1.700)
+  const oggi: import("../lib/engine.ts").Line[] = [{ id: "n", t: "NASpI", k: "e", v: 1100, f: "D" }, { id: "f", t: "Spesa famiglia", k: "s", v: 1200, f: "D" }, { id: "c", t: "Casa a Roma (di proprietà)", k: "s", v: 0, f: "D" }];
+  const ib: import("../lib/engine.ts").Opt = { id: "i", name: "Accetto Ibiza", s: {}, conti: [
+    { id: "f2", t: "Spesa famiglia", k: "s", v: 1200, from: "f" }, { id: "c2", t: "Casa a Roma (di proprietà)", k: "s", v: 0, from: "c" },
+    { id: "st", t: "Stipendio netto Ibiza", k: "e", v: 2400, f: "S" }, { id: "af", t: "Affitto Ibiza", k: "s", v: 1450, lo: 1300, hi: 1700, f: "S" }, { id: "tr", t: "Trasloco", k: "s", v: 3000, u: true }] };
+  const cdx = E.contiDelta(ib, oggi)!;
+  assert.deepEqual([cdx.oggi, cdx.strada[1], cdx.delta[1]], [-100, -250, -150]);
+  assert.deepEqual(cdx.delta, [-400, -150, 0]);   // affitto 1.700 se va male, 1.300 se va bene
+  assert.equal(cdx.once, -3000);
+  const mx = E.syncConti({ criteria: [], constraints: [], options: [ib], oggi });
+  assert.deepEqual(mx.options[0].impacts!.find((x) => x.r === "cash_m")!.v, [-400, -150, 0]);
+  assert.equal(mx.options[0].impacts!.find((x) => x.r === "cash0")!.v, -3000);
+  // 45. conti dall'Analista: non sovrascrive, copia oggi, toglie ciò che sparisce; senza consenso niente cifre
+  const AI = await import("../lib/ai.ts");
+  const dC: Decision = { id: "c", name: "c", status: "aperta", imp: 1, descr: "Offerta a Ibiza, netto 2.400 €, a Roma casa di proprietà", model: { criteria: [], constraints: [], options: [{ id: "i", name: "Accetto Ibiza", s: {} }, { id: "r", name: "Resto", s: {}, conti: [{ id: "u", t: "mia voce", k: "s", v: 5 }] }],
+    oggi: [{ id: "f", t: "Spesa famiglia", k: "s", v: 1200, f: "D" }] } };
+  const cr = AI.contiFromAi(dC.model, { q: ["Quanto entra oggi?"], o: [{ t: "NASpI", k: "e", v: 1100, f: "D" }, { t: "spesa famiglia", k: "s", v: 9999 }],
+    s: [{ a: "Accetto Ibiza", x: ["NASpI"], l: [{ t: "Stipendio netto Ibiza", k: "e", v: 2400, f: "S" }] }, { a: "Resto", l: [{ t: "x", k: "s", v: 1 }] }] });
+  assert.equal(cr.model.oggi!.find((l) => /famiglia/i.test(l.t))!.v, 1200);   // la tua voce resta
+  assert.ok(cr.model.oggi!.some((l) => l.t === "NASpI" && l.src === "ai"));
+  const ibc = cr.model.options[0].conti!;
+  assert.ok(!ibc.some((l) => l.t === "NASpI") && ibc.some((l) => l.t === "Stipendio netto Ibiza" && l.f === "S") && ibc.some((l) => l.from));
+  assert.equal(cr.model.options[1].conti!.length, 1);   // conti già scritti: non toccati
+  // seconda richiesta con le risposte: riempie solo gli importi vuoti (anche nelle copie da oggi)
+  const empty = AI.contiFromAi(dC.model, { o: [{ t: "NASpI", k: "e", v: null }], s: [{ a: "Accetto Ibiza", x: ["NASpI"], l: [{ t: "Affitto Ibiza", k: "s", v: null }] }] }).model;
+  const filled = AI.contiFromAi(empty, { o: [{ t: "NASpI", k: "e", v: 1100, f: "D" }, { t: "Spesa famiglia", k: "s", v: 1 }], s: [{ a: "Accetto Ibiza", l: [{ t: "Affitto Ibiza", k: "s", v: 1450, f: "S" }] }] }).model;
+  assert.equal(filled.oggi!.find((l) => l.t === "NASpI")!.v, 1100);
+  assert.equal(filled.oggi!.find((l) => l.t === "Spesa famiglia")!.v, 1200);
+  assert.equal(filled.options[0].conti!.find((l) => l.t === "Affitto Ibiza")!.v, 1450);
+  assert.deepEqual(cr.questions, ["Quanto entra oggi?"]);
+  const pl0 = JSON.stringify(AI.contiPayload(dC, false));
+  assert.ok(!/\d{3}/.test(pl0) && pl0.includes("privacy"), pl0);
+  assert.ok(JSON.stringify(AI.contiPayload(dC, true)).includes("1200"));
+  // 46. conti incompleti o stimati → cose da chiarire
+  const dR: Decision = { id: "z", name: "z", status: "aperta", imp: 1, model: { criteria: [{ id: "p", name: "P", w: 0, imp: 3, kind: "g" }], constraints: [], oggi,
+    options: [{ ...ib, s: { p: 100 }, m: { p: { rel: "F" } }, kd: "cond" }, { id: "b", name: "B", s: { p: 25 }, m: { p: { rel: "F" } }, kd: "prova" }, { id: "c", name: "C", s: { p: 25 }, m: { p: { rel: "F" } }, kd: "cerca" }] } };
+  assert.ok(E.readiness(dR, E.analyzeDecision(dR)).open.some((c) => c.key === "conti" && c.t.includes("stime")));
+  console.log("engine: conti di oggi e per strada ok");
 }

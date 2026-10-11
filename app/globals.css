@@ -427,3 +427,23 @@ details.deep > summary { cursor: pointer; font-weight: 600; color: var(--navy); 
 .pill.area.benessere, .pill.area.salute { background: #e8f6ee; color: #1f7a52; } .pill.area.clienti { background: #eef0ff; color: #3b45a1; }
 .pill.area.qualità, .pill.area.reputazione { background: #f6efff; color: #6a3fa3; } .pill.area.team, .pill.area.relazioni { background: #fde8ef; color: #9b2c55; }
 .pill.area.operatività, .pill.area.carriera { background: var(--teal-l); color: var(--teal-d); } .pill.area.sicurezza, .pill.area.flessibilità { background: #fff1dc; color: #8a5410; }
+
+.cmd > summary { cursor: pointer; font-size: 13px; color: var(--teal-d); font-weight: 600; margin-top: 6px; }
+.cmcalc { background: var(--bg); border-radius: 10px; padding: 10px; margin-top: 6px; gap: 8px; }
+
+/* conti */
+.conti { border-left: 5px solid var(--green); }
+.contigrid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.lrow { display: grid; grid-template-columns: minmax(0, 1.4fr) auto auto; gap: 6px; align-items: center; border-left: 3px solid var(--line); padding-left: 8px; }
+.lrow.e { border-left-color: var(--green); } .lrow.s { border-left-color: var(--orange); }
+.lrow select { width: auto; font-size: 13px; padding: 5px 6px; }
+.lmeta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.lmeta select { font-size: 12px; padding: 3px 6px; }
+.lrng { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.lmiss { grid-column: 1 / -1; color: #a5620f; font-size: 12px; }
+.contiopt { border-top: 1px dashed var(--line); padding-top: 8px; }
+.contiopt > summary { cursor: pointer; font-weight: 600; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ok-t { color: var(--green); display: block; margin-top: 4px; }
+@media (max-width: 860px) { .contigrid { grid-template-columns: 1fr; } .lrow { grid-template-columns: minmax(0, 1fr) auto; } .lrow .numin { grid-column: 1 / -1; } }
+.rep-conti { background: var(--bg); border-radius: 10px; padding: 10px 14px; margin-bottom: 10px; font-size: 13px; }
+.rep-conti h3 { margin: 0 0 6px; font-size: 14px; }

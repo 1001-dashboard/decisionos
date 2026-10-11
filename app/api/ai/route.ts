@@ -21,7 +21,7 @@ const MODEL = process.env.ANTHROPIC_MODEL || "claude-haiku-5-5";
 const GEMINI = process.env.GEMINI_MODEL || "gemini-flash-latest";
 const CAP = Number(process.env.AI_DAILY_CALLS || 60);
 
-const BASE = "Sei l'analista critico di Decision OS. Italiano, conciso, concreto. Mai confermare per compiacere. Non inventare fatti: se manca un dato dillo. Rispondi SOLO con JSON valido, nessun testo fuori.";
+const BASE = "Sei l'analista critico di Decision OS. Italiano, conciso, concreto. Mai confermare per compiacere. Non inventare fatti né costi che l'utente non ha detto (es. un affitto se la casa è di proprietà, una seconda casa se la famiglia resta dov'è): se un dato manca, dillo o chiedilo. Rispondi SOLO con JSON valido, nessun testo fuori.";
 
 const P: Record<string, { s: string; max: number }> = {
   struttura: {
@@ -32,7 +32,7 @@ const P: Record<string, { s: string; max: number }> = {
 "ar":["4-7 aree in cui si vedono le conseguenze, adatte al tipo (es. impresa: clienti, qualità, team, operatività, reputazione, compliance; persona: salute, relazioni, libertà, benessere). Mai casa, famiglia o trasferimento se non c'entrano"],
 "x":"in 1 frase cosa conta poco in questa scelta e perché (es. per una scelta morale i soldi pesano poco), oppure vuoto",
 "serve":true se mancano informazioni senza cui il quadro è fuorviante,
-"q":["max 3 domande mirate, solo se servono"],
+"q":["max 5 domande mirate: prima la situazione di partenza (entrate e spese di oggi, casa di proprietà o in affitto, cosa resta uguale), poi i dati che decidono"],
 "a":[{"n":"strada","kd":"base|cond|prova|temp|rinvio|cerca|sq","p":["pro concreti, max 3, brevi"],"m":["contro concreti, max 3, brevi"],"tl":[{"h":uno degli orizzonti ph,"a":"una delle aree ar","t":"cosa succede concretamente"}],"nx":["decisione che questa strada costringe a prendere dopo"],"cd":[{"t":"condizione verificabile perché la strada abbia senso, con soglia se il racconto la dà","h":"azione concreta per verificarla","g":true se senza di essa la strada non ha senso}],"rk":[{"t":"rischio concreto di questa strada","p":"bassa|media|alta","c":perdita una tantum in € se succede (solo se il racconto dà le cifre),"m":perdita €/mese mentre dura (idem),"d":mesi di durata,"x":"come ridurlo, se possibile"}]}],
 "c":[{"n":"criterio","y":"perché conta in questa scelta, 1 riga","t":"num se misurabile (soldi, tempo, km) altrimenti g","u":"unità se num, es. €/mese","p":valore pessimo se num,"o":valore ottimo se num,"i":importanza 1-5}],
 "v":[{"c":"nome criterio","min":soglia,"max":soglia,"n":"vincolo non negoziabile detto dall'utente"}],
@@ -46,7 +46,15 @@ Regole: le alternative sono PIANI, non sì/no. Strategie kd: base diretta, cond 
     s: `Strade e conseguenze di una decisione esistente. Le scelte reali raramente sono sì/no: cerca le strade mancanti con le strategie pertinenti (kd: cond condizionata, prova sperimentale/pilota, temp temporanea, rinvio rinviata, cerca alternativa, sq status quo) e completa quelle esistenti. Se la decisione non ha orizzonti (hz assente) proponi "ph" e "ar" come per una decisione nuova; altrimenti usa quelli forniti. Non dire cosa scegliere. JSON:
 {"x":"se le strade attuali sono un falso dilemma, perché in 1 frase, altrimenti vuoto",
 "a":[{"n":"strada","kd":"base|cond|prova|temp|rinvio|cerca|sq","p":["pro concreti, max 3, brevi"],"m":["contro concreti, max 3, brevi"],"tl":[{"h":uno degli orizzonti ph,"a":"una delle aree ar","t":"cosa succede concretamente"}],"nx":["decisione che questa strada costringe a prendere dopo"],"cd":[{"t":"condizione verificabile perché la strada abbia senso, con soglia se il racconto la dà","h":"azione concreta per verificarla","g":true se senza di essa la strada non ha senso}],"rk":[{"t":"rischio concreto","p":"bassa|media|alta","c":perdita una tantum €,"m":perdita €/mese,"d":mesi,"x":"come ridurlo"}]}]}
-Regole: ripeti le strade esistenti con lo stesso nome n per completarne tl, nx, cd; aggiungi max 3 strade nuove. Negoziare non è una strada: va nelle azioni h. tl sulla vita reale, non solo soldi. rk: 1-3 rischi reali per strada con come ridurli. Non inventare cifre: soglie e importi solo se presenti nei dati.`,
+Regole: ripeti le strade esistenti con lo stesso nome n per completarne tl, nx, cd; aggiungi max 3 strade nuove, mai quelle in no (scartate dall'utente, con il motivo) né loro varianti. Negoziare non è una strada: va nelle azioni h. tl sulla vita reale, non solo soldi. rk: 1-3 rischi reali per strada con come ridurli. Non inventare cifre: soglie e importi solo se presenti nei dati.`,
+  },
+  conti: {
+    max: 1600,
+    s: `Imposta i conti di una decisione: il bilancio mensile di OGGI e cosa cambia con ogni strada a. Prima di tutto indaga: se mancano numeri necessari (entrate di oggi, costo della casa oggi, spese fisse, entrate e costi con ogni strada) chiedili in q. NON inventare voci o costi che l'utente non ha detto: es. se la casa è di proprietà non c'è affitto; se la famiglia resta a casa non esiste una seconda casa da pagare finché l'utente non lo dice. JSON:
+{"q":["max 6 domande mirate sui numeri che mancano"],
+"o":[{"t":"voce di oggi","k":"e entrata|s spesa","v":importo mensile o null se non detto,"f":"D se l'ha detto l'utente, S se stima"}],
+"s":[{"a":"nome strada esatto","x":["voci di oggi che con questa strada spariscono (es. sussidio che finisce)"],"l":[{"t":"voce nuova o che cambia (stesso nome se cambia)","k":"e|s","v":importo probabile o null,"lo":minimo,"hi":massimo,"u":true se una tantum,"f":"D|S"}]}]}
+Regole: in l solo ciò che cambia rispetto a oggi; il resto resta uguale e non va ripetuto. Importi mensili netti, positivi. Se c'è privacy, v sempre null: l'utente metterà le cifre. Stime solo se ragionevoli e marcate S.`,
   },
   dati: { max: 900, s: `Analisi dei dati. Separa fatti verificati, dichiarati, stime, mancanti. Trova contraddizioni e cifre che non tornano. JSON {"p":["punto"],"c":"conclusione 1-2 frasi"}` },
   contro: { max: 900, s: `Contraddittorio. Dai il miglior argomento CONTRO l'alternativa in testa, verifica alternative ignorate, metti alla prova ipotesi e pesi. JSON {"p":["obiezione"],"c":"conclusione 1-2 frasi"}` },

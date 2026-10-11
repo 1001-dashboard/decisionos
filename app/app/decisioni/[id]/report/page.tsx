@@ -7,7 +7,7 @@ import { useWs } from "@/components/Workspace";
 import { ScoreBars, LineChart, Legend, PAL } from "@/components/charts";
 import {
   analyzeDecision, biasChecks, conclusive, cashBreakpoint, cashSeries, crossEffects, eur, fmt, hashOf, normalize, solidity, tradeoff, turningPoints,
-  LEVELS, SCEN, type Scen, untestedText, infoValue, readiness, focus, stopText, fallbackText, oddScenario, riskViews, riskSummary, phasesOf, snapPhase, customRes, PLAN_L } from "@/lib/engine";
+  LEVELS, SCEN, type Scen, untestedText, infoValue, readiness, focus, stopText, fallbackText, oddScenario, invertedScenario, contiDelta, saldo, riskViews, riskSummary, phasesOf, snapPhase, customRes, PLAN_L } from "@/lib/engine";
 import { actionPlan, briefing, consequences, projection, valueText, HZ } from "@/lib/narrative";
 import { compact } from "@/lib/ai";
 import { PRI } from "@/lib/priorities";
@@ -133,6 +133,7 @@ export default function Report() {
             <div>
               <h3>Cosa stai decidendo</h3>
               <ul>{m.options.map((o) => <li key={o.id}><b>{o.name}</b>{o.note ? ` — ${o.note}` : ""}</li>)}</ul>
+              {(m.scartate ?? []).length > 0 && <><h3>Strade considerate e scartate</h3><ul>{m.scartate!.map((x, k) => <li key={k}>{x.name}{x.why ? ` — ${x.why}` : " — senza motivo indicato"}</li>)}</ul></>}
             </div>
             <div>
               <h3>Il tuo punto di partenza</h3>
@@ -294,7 +295,20 @@ export default function Report() {
           <H t="Scenari: soldi e tempo nel tempo" />
           {!hasMoney ? <p className="muted">Non sono stati indicati effetti su soldi e tempo: inseriscili nel passo «Soldi e tempo» per vedere gli scenari.</p> : (
             <>
+              {(m.oggi?.length || m.options.some((o) => o.conti?.length)) ? (
+                <div className="rep-conti">
+                  <h3>Da dove vengono le cifre: i conti</h3>
+                  <div className="rep-grid2">
+                    <div><b>Oggi, al mese</b><ul>{(m.oggi ?? []).map((l) => <li key={l.id}>{l.t}: {l.v == null ? <i>da inserire</i> : `${l.k === "e" ? "+" : "−"}${eur(l.v)}`} <small className="muted">({l.f === "S" ? "stima" : l.f === "F" ? "verificato" : "detto da te"}{l.src === "ai" ? ", proposto dall'AI" : ""})</small></li>)}{!m.oggi?.length && <li className="muted">—</li>}</ul>
+                      <small>Saldo: {eur(saldo(m.oggi ?? [])[1])}/mese</small></div>
+                    {m.options.filter((o) => o.conti?.length).map((o) => { const cd = contiDelta(o, m.oggi ?? [])!; return (
+                      <div key={o.id}><b>Con «{o.name}»</b><ul>{o.conti!.filter((l) => !l.from || (m.oggi ?? []).find((x) => x.id === l.from)?.v !== l.v).map((l) => <li key={l.id}>{l.t}: {l.v == null ? <i>da inserire</i> : `${l.k === "e" ? "+" : "−"}${eur(l.v)}${l.u ? " una tantum" : ""}`} <small className="muted">({l.f === "S" ? "stima" : l.f === "F" ? "verificato" : "detto da te"})</small></li>)}</ul>
+                        <small>Il resto come oggi. Differenza: {cd.delta[1] >= 0 ? "+" : ""}{eur(cd.delta[1])}/mese (se va male {eur(cd.delta[0])}, se va bene {eur(cd.delta[2])}){cd.missing.length ? ` · mancano: ${cd.missing.join(", ")}` : ""}.</small></div>); })}
+                  </div>
+                </div>
+              ) : null}
               <p>Risparmi a fine periodo per ogni alternativa, nei tre scenari. Proiezione lineare (risparmi di oggi + differenza mensile × mesi), senza probabilità: «se va male» e «se va bene» sono ipotesi, non previsioni.</p>
+              {m.options.filter((o) => invertedScenario(o)).map((o) => <p key={"iv" + o.id} className="rep-callout warn"><b>Attenzione su {o.name}:</b> «se va male» è migliore di «se va bene» nella differenza mensile: probabilmente sono spese scritte senza il segno −. Le cifre di questa strada sono rovesciate e vanno corrette prima di usarle.</p>)}
               {m.options.filter((o) => oddScenario(o)).map((o) => { const od = oddScenario(o)!; return <p key={o.id} className="rep-callout warn"><b>Attenzione su {o.name}:</b> «se va male» ({eur(od.sf)}/mese) è lontano dal probabile ({eur(od.c)}/mese) e cambia segno. Descrive un altro evento, come perdere lo stipendio, non la stessa strada andata peggio: la colonna «Se va male» di questa strada non è affidabile.</p>; })}
               {m.options.some((o) => (o.impacts ?? []).some((i) => i.src === "ai")) && <p className="rep-callout">Contiene importi stimati dall&apos;AI e non confermati ({m.options.filter((o) => (o.impacts ?? []).some((i) => i.src === "ai")).map((o) => `«${o.name}»`).join(", ")}): trattali come ipotesi da verificare.</p>}
               <table className="rt">
