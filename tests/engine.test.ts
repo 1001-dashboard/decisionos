@@ -103,6 +103,7 @@ console.log("engine: 10/10 ok");
   const E = await import("../lib/engine.ts");
   const { exampleDecision } = await import("../lib/demo.ts");
   const ex = clone(exampleDecision);
+  ex.model.options = ex.model.options.filter((o) => o.id !== "E4");   // meccanica dello scambio sulle tre strade di base
   const r = E.analyzeDecision(ex);
   const tr = E.tradeoff(ex, r)!;
   assert.ok(tr && tr.a === "Ibiza con alloggio incluso" && tr.gains.length && tr.losses.length, JSON.stringify(tr));   // vero compromesso
@@ -111,7 +112,7 @@ console.log("engine: 10/10 ok");
   const exF = clone(ex); exF.model.criteria[0].imp = 2;
   assert.equal(E.analyzeDecision(exF).rows[0].name, "Resto a Roma e cerco qui");
   assert.ok(!tr.risks.some((x) => x.includes("?.")));
-  const exL = clone(ex); exL.model.options[1].s.sta = 0;                     // resta prima, perde di più sulla stabilità
+  const exL = clone(ex); exL.model.options.find((o) => o.id === "E2")!.s.sta = 0;                     // resta prima, perde di più sulla stabilità
   const trL = E.tradeoff(exL, E.analyzeDecision(exL))!;
   assert.ok(trL.a === "Ibiza con alloggio incluso" && trL.losses.some((x) => x.startsWith("Stabilità del lavoro: pessimo invece di medio")), JSON.stringify(trL));
   assert.ok(tr.gains.some((g) => g.includes("€/mese invece di")), JSON.stringify(tr.gains));
@@ -289,4 +290,38 @@ console.log("engine: 10/10 ok");
   const solo: Decision = { ...vp, model: { ...vp.model, options: [vp.model.options[0]] } };
   assert.ok(!E.conclusive(solo, E.analyzeDecision(solo)).ok);
   console.log("engine: importi senza simbolo, vincoli pendenti ok");
+  // 26. falso dilemma: sì contro restare fermo
+  const fd: Decision = { id: "f", name: "f", status: "aperta", imp: 1, model: { criteria: [{ id: "p", name: "P", w: 0, imp: 3, kind: "g" }], constraints: [],
+    options: [{ id: "a", name: "Accetto Ibiza", s: { p: 75 } }, { id: "b", name: "Rifiuto e resto fermo", s: { p: 50 } }] } };
+  const dl = E.falseDilemma(fd)!;
+  assert.ok(dl && dl.sugg.some((x) => x.kd === "prova") && dl.sugg.some((x) => x.kd === "cerca") && dl.sugg.some((x) => x.kd === "cond"), JSON.stringify(dl));
+  // 27. decisione condizionata sull'esempio: non pronta, con condizione vincolante e alternativa di riserva
+  const exD = structuredClone((await import("../lib/demo.ts")).exampleDecision);
+  const rxD = E.analyzeDecision(exD);
+  const rdD = E.readiness(exD, rxD, { cash0: 12000, cash_m: -300, hours_w: 50 }, []);
+  assert.equal(rdD.state, "non_pronta");
+  assert.ok(rdD.lead && rdD.fallback && rdD.lead.id !== rdD.fallback.id);
+  assert.ok(rdD.open.some((c) => c.gate && c.kind === "utente") && rdD.open.some((c) => c.kind === "dato"));
+  assert.equal(E.falseDilemma(exD), null);   // l'esempio ha già piani condizionati, prova e ricerca
+  // 28. condizione vincolante «no» → la strada esce e prevale la riserva
+  const exD2 = structuredClone(exD);
+  const leadD = exD2.model.options.find((o) => o.id === rdD.lead!.id)!;
+  leadD.cond!.find((c) => c.gate)!.st = "no";
+  const r2b = E.analyzeDecision(exD2);
+  assert.ok(r2b.rows.find((x) => x.id === leadD.id)!.excluded.some((w) => w.startsWith("condizione non soddisfatta")));
+  assert.equal(r2b.rows.find((x) => !x.excluded.length)!.id, rdD.fallback!.id);
+  // 29. pronta: dati certi, nessuna condizione aperta
+  const prD: Decision = { id: "r", name: "r", status: "aperta", imp: 1, model: { criteria: [{ id: "p", name: "P", w: 0, imp: 3, kind: "g" }], constraints: [],
+    options: [{ id: "a", name: "A", s: { p: 100 }, m: { p: { rel: "F" } }, cond: [{ id: "c", t: "ok", st: "si" }] }, { id: "b", name: "B", s: { p: 25 }, m: { p: { rel: "F" } } }, { id: "c", name: "A solo a condizioni", kd: "cond", s: { p: 50 }, m: { p: { rel: "F" } } }, { id: "d", name: "A in prova", kd: "prova", s: { p: 50 }, m: { p: { rel: "F" } } }] } };
+  const rpD = E.readiness(prD, E.analyzeDecision(prD));
+  assert.equal(rpD.state, "pronta", JSON.stringify(rpD.open));
+  assert.equal(rpD.done.length, 1);
+  // 30. strade dall'AI: piani, conseguenze e condizioni, difensivo
+  const { mergeStrade, planFromAi } = await import("../lib/ai.ts").then((x) => ({ mergeStrade: x.mergeStrade, planFromAi: x.planFromAi }));
+  const plD = planFromAi({ n: "x", kd: "prova", tl: [{ h: 4, a: "casa", t: "stanza" }, { t: "" }, null as never], cd: [{ t: "netto", h: "chiedi", g: true }], nx: ["dopo", 3 as never] });
+  assert.ok(plD.kd === "prova" && plD.tl!.length === 1 && plD.tl![0].h === 3 && plD.cond![0].gate && plD.cond![0].st === "?" && plD.next!.length === 1);
+  const mgD = mergeStrade(exD.model, { a: [{ n: "Accetto Ibiza", tl: [{ h: 1, t: "nuovo" }] }, { n: "Spagna continentale", kd: "cerca", cd: [{ t: "offerta" }] }, "bad" as never] });
+  assert.deepEqual(mgD.added, ["Spagna continentale"]);
+  assert.equal(mgD.model.options.find((o) => o.name === "Accetto Ibiza")!.tl!.length, exD.model.options[0].tl!.length);   // non sovrascrive
+  console.log("engine: strade, conseguenze, decisione condizionata ok");
 }

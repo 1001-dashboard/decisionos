@@ -11,8 +11,23 @@ export type Constraint = { id: string; name: string; crit: string; min?: number 
 /** src: chi ha messo il valore. "ai" = stima dell'Analista non ancora confermata da te. */
 export type Impact = { r: string; v: number | [number, number, number]; tag?: string; src?: "ai" | "user" };
 export type Meta = { why?: string; rel?: Rel; src?: string; dt?: string };
+/** Una tappa di «cosa succede dopo» se scegli questa strada. h = mesi (1 = entro 30 giorni). */
+export type Area = "soldi" | "tempo" | "famiglia" | "lavoro" | "casa" | "progetti" | "rischi";
+export const AREAS: Area[] = ["soldi", "tempo", "famiglia", "lavoro", "casa", "progetti", "rischi"];
+export const PHASES = [1, 3, 6, 12] as const;
+export const PHASE_L: Record<number, string> = { 1: "Entro 30 giorni", 3: "Entro 3 mesi", 6: "Entro 6 mesi", 12: "Entro 12 mesi" };
+export type Phase = { h: number; a?: Area; t: string; src?: "ai" | "user" };
+/** Condizione perché questa strada abbia senso. gate = se è falsa la strada esce. st: ? da verificare, si, no. */
+export type Cond = { id: string; t: string; how?: string; gate?: boolean; st: "?" | "si" | "no"; src?: "ai" | "user" };
+/** Tipo di piano: base, cond = solo a condizioni, prova = a tempo con uscita, cerca = cerco altro prima/invece. */
+export type PlanKind = "base" | "cond" | "prova" | "cerca";
+export const PLAN_L: Record<PlanKind, string> = { base: "Strada principale", cond: "Solo a condizioni", prova: "Prova con uscita", cerca: "Cerco altro" };
 export type Opt = {
   id: string; name: string; note?: string;
+  kd?: PlanKind;
+  tl?: Phase[];      // cosa succede dopo, per fasi
+  next?: string[];   // decisioni che questa strada ti costringe a prendere dopo
+  cond?: Cond[];     // cosa deve essere vero
   pro?: string[]; con?: string[];   // pro e contro a parole (spunti da verificare)
   s: Record<string, number>;
   raw?: Record<string, number>;
@@ -24,7 +39,7 @@ export type Assumption = { id: string; t: string; rel: Rel; aff?: "alta" | "medi
 export type AiNote = { p: string[]; c?: string; at: string; h: string };
 export type Model = {
   criteria: Crit[]; constraints: Constraint[]; options: Opt[]; assumptions?: Assumption[];
-  ai?: { contro?: AiNote };
+  ai?: { contro?: AiNote; strade?: { at: string; h: string; x?: string } };
   tipo?: string;   // tipo di scelta riconosciuto (lavoro, casa, morale…)
   nota?: string;   // cosa conta poco in questa scelta, secondo l'Analista
 };
@@ -106,6 +121,7 @@ export function score(o: Opt, crit: Crit[], override?: Record<string, number>) {
 export function feasible(o: Opt, cons: Constraint[], crit: Crit[]) {
   const why: string[] = [], pending: string[] = [];
   if (o.block) why.push(o.block);
+  for (const c of o.cond ?? []) if (c.gate && c.st === "no") why.push(`condizione non soddisfatta: ${c.t}`);
   for (const k of cons) {
     const c = crit.find((x) => x.id === k.crit);
     if (!c) continue;
@@ -514,3 +530,215 @@ export function conclusive(dec: Decision, r: DecResult): Concl {
   const rivals = ok.filter((x) => x.id !== best.id && hi(x) >= lo(best));  // chi potrebbe ancora superarla
   return { ok: !rivals.length, missing, missW, contenders: rivals.length ? [best.name, ...rivals.map((x) => x.name)] : [] };
 }
+
+/* ---------- Valore dell'informazione: quale dato può ribaltare la scelta ---------- */
+// Per ogni valore mancante o stimato, lo facciamo variare nel suo intervallo plausibile (tutta la scala se manca,
+// ±25% della scala attorno alla stima) e guardiamo chi resta in testa. Nessuna probabilità: solo «può cambiare / non può».
+export type InfoItem = {
+  opt: string; optName: string; crit: string; critName: string; kind: "manca" | "stima";
+  flips: boolean; share: number; w: number; cur?: string; text: string;
+  cut?: { lowId: string; highId: string; low: string; high: string };   // un solo punto di svolta: chi vince sotto e sopra
+};
+
+const niceRound = (x: number, span: number) => {
+  const st = span >= 5000 ? 100 : span >= 1000 ? 50 : span >= 100 ? 10 : span >= 10 ? 1 : 0.1;
+  return Math.round(x / st) * st;
+};
+
+export function infoValue(dec: Decision): InfoItem[] {
+  const nm = normalize(dec.model);
+  const out: InfoItem[] = [];
+  const leader = (model: Model) => analyzeDecision({ ...dec, model }).rows.find((x) => !x.excluded.length)?.id ?? "-";
+  const nameOf = (id: string) => (id === "-" ? "nessuna (tutte scartate)" : dec.model.options.find((o) => o.id === id)?.name ?? id);
+  for (const o of dec.model.options) {
+    for (const c of nm.criteria) {
+      const isNum = c.kind === "num";
+      if (isNum && (c.worst == null || c.best == null || c.worst === c.best)) continue;
+      const cur = isNum ? o.raw?.[c.id] : o.s?.[c.id];
+      const rel = o.m?.[c.id]?.rel;
+      const kind: InfoItem["kind"] | null = cur == null ? "manca" : rel === "S" || rel === "?" ? "stima" : null;
+      if (!kind) continue;
+      const lo = isNum ? Math.min(c.worst!, c.best!) : 0, hi = isNum ? Math.max(c.worst!, c.best!) : 100;
+      const span = hi - lo;
+      let a = lo, b = hi;
+      if (kind === "stima") { a = Math.max(lo, cur! - span / 4); b = Math.min(hi, cur! + span / 4); if (cur! < lo || cur! > hi) { a = cur! - span / 4; b = cur! + span / 4; } }
+      const pts = c.kind === "g" ? [0, 25, 50, 75, 100].filter((v) => v >= a - 0.1 && v <= b + 0.1) : Array.from({ length: 17 }, (_, i) => a + ((b - a) * i) / 16);
+      const at = (v: number) => {
+        const mm: Model = JSON.parse(JSON.stringify(dec.model));
+        const oo = mm.options.find((x) => x.id === o.id)!;
+        if (isNum) (oo.raw ??= {})[c.id] = v; else (oo.s ??= {})[c.id] = v;
+        return leader(mm);
+      };
+      const tops = pts.map(at);
+      const cnt = new Map<string, number>();
+      tops.forEach((t) => cnt.set(t, (cnt.get(t) ?? 0) + 1));
+      const flips = cnt.size > 1;
+      const share = flips ? 1 - Math.max(...cnt.values()) / tops.length : 0;
+      const fv = (v: number) => (isNum ? `${fmt(niceRound(v, span))}${c.unit ? " " + c.unit : ""}` : c.kind === "g" ? LEVELS[levelOf(v)] : fmt(Math.round(v)));
+      const curTxt = cur == null ? undefined : fv(cur);
+      let text = "";
+      let cut: InfoItem["cut"];
+      if (!flips) text = `qualunque valore plausibile, in testa resta ${nameOf(tops[0])}`;
+      else {
+        const ch: number[] = [];
+        for (let i = 1; i < tops.length; i++) if (tops[i] !== tops[i - 1]) ch.push(i);
+        if (ch.length === 1) {
+          const i = ch[0];
+          let x = pts[i - 1], y = pts[i];
+          if (c.kind !== "g") for (let k = 0; k < 14; k++) { const mid = (x + y) / 2; if (at(mid) === tops[i - 1]) x = mid; else y = mid; }
+          // «più alto» in valore reale non è sempre «meglio»: parliamo di sotto/sopra la soglia nell'unità dell'utente
+          if (c.kind === "g") {
+            text = `se è ${LEVELS[levelOf(pts[i - 1])]} o meno prevale ${nameOf(tops[i - 1])}, se è ${LEVELS[levelOf(pts[i])]} o più prevale ${nameOf(tops[i])}`;
+            cut = { lowId: tops[i - 1], highId: tops[i], low: `resta al massimo «${LEVELS[levelOf(pts[i - 1])]}»`, high: `è almeno «${LEVELS[levelOf(pts[i])]}»` };
+          } else {
+            text = `sotto ${fv(y)} prevale ${nameOf(tops[i - 1])}, sopra prevale ${nameOf(tops[i])}`;
+            cut = { lowId: tops[i - 1], highId: tops[i], low: `resta sotto ${fv(y)}`, high: `è almeno ${fv(y)}` };
+          }
+        } else text = `a seconda del valore può prevalere ${[...new Set(tops)].map(nameOf).join(" oppure ")}`;
+      }
+      out.push({ opt: o.id, optName: o.name, crit: c.id, critName: c.name, kind, flips, share, w: c.w, cur: curTxt, text, cut });
+    }
+  }
+  return out.sort((x, y) => Number(y.flips) - Number(x.flips) || y.share - x.share || y.w - x.w);
+}
+
+/* ---------- «Dove sei»: la scelta vera, il dato che decide, cosa fare adesso ---------- */
+export type Focus = {
+  trade: string; decide: string; decideItem?: InfoItem; also: InfoItem[]; calm: InfoItem[];
+  todo: string; act: "dato" | "pesi" | "requisiti" | "decidi" | "completa";
+};
+
+export function focus(dec: Decision, r: DecResult, turns: Turn[] = [], info?: InfoItem[]): Focus | null {
+  const nm = normalize(dec.model);
+  if (nm.options.length < 2 || !nm.criteria.length) return null;
+  const ok = r.rows.filter((x) => !x.excluded.length);
+  info ??= infoValue(dec);
+  const hot = info.filter((x) => x.flips);
+  const calm = info.filter((x) => !x.flips);
+  // la scelta vera: su cosa vince la prima e su cosa vince la seconda
+  let trade: string;
+  if (!ok.length) trade = "Nessuna alternativa rispetta i tuoi requisiti: la scelta vera è quale requisito sei disposto ad allentare.";
+  else if (ok.length < 2) trade = `Solo ${ok[0].name} rispetta i tuoi requisiti: la domanda non è quale scegliere, ma se ${ok[0].name} ti va bene o se cercare altre strade.`;
+  else {
+    const [A, B] = ok;
+    const d = nm.criteria.map((c) => {
+      const a = A.detail.find((x) => x.crit === c.id)?.s, b = B.detail.find((x) => x.crit === c.id)?.s;
+      return { n: c.name, v: a == null || b == null ? 0 : (a - b) * c.w, miss: a == null ? A.name : b == null ? B.name : "" };
+    });
+    const ms = d.filter((x) => x.miss);
+    const missTxt = ms.length ? ` Su ${ms.slice(0, 2).map((x) => `«${x.n}»`).join(" e ")} manca ancora il dato di ${[...new Set(ms.map((x) => x.miss))].join(" e ")}.` : "";
+    const fa = d.filter((x) => x.v > 0).sort((x, y) => y.v - x.v).slice(0, 2).map((x) => `«${x.n}»`);
+    const fb = d.filter((x) => x.v < 0).sort((x, y) => x.v - y.v).slice(0, 2).map((x) => `«${x.n}»`);
+    const j = (l: string[]) => l.join(" e ");
+    trade = fa.length && fb.length
+      ? `${A.name} è meglio su ${j(fa)}; ${B.name} su ${j(fb)}. Stai decidendo quanto vale per te ${fa[0]} rispetto a ${fb[0]}.`
+      : fa.length ? `${A.name} è uguale o meglio di ${B.name} su tutto ciò che hai valutato: la differenza sta in ${j(fa)}.`
+      : `${A.name} e ${B.name} sono alla pari sui valori che hai inserito.`;
+    trade += missTxt;
+  }
+  // il dato che decide
+  let decide: string, todo: string, act: Focus["act"];
+  const top = hot[0];
+  if (top) {
+    decide = `«${top.critName}» di ${top.optName}${top.kind === "manca" ? " (manca)" : ` (oggi stimato ${top.cur})`}: ${top.text}.`;
+    todo = top.kind === "manca" ? `Trova il valore di «${top.critName}» per ${top.optName} e inseriscilo al passo «Valuta».` : `Verifica «${top.critName}» di ${top.optName}: oggi è una stima e da lei dipende la scelta.`;
+    act = "dato";
+  } else if (ok[0]?.pending.length) {
+    decide = `${ok[0].name} deve ancora superare un requisito: ${ok[0].pending.join("; ")}.`;
+    todo = "Verifica il requisito e inserisci il dato al passo «Valuta».";
+    act = "requisiti";
+  } else {
+    decide = info.length
+      ? `Nessun dato mancante o stimato può cambiare chi è in testa: le informazioni che hai bastano per decidere.`
+      : turns[0] ? `Nessun dato è incerto. La scelta cambierebbe solo se: ${turns[0].text}` : "Nessun dato è incerto e nessun singolo valore ribalta la classifica.";
+    if (r.fragile.length) {
+      todo = `I dati bastano; la scelta dipende da quanto conta ${r.fragile.map((f) => `«${f.name}»`).join(" e ")}. Chiediti se l'importanza che hai dato è davvero quella, poi decidi.`;
+      act = "pesi";
+    } else if (r.rows.some((x) => x.missing.length)) {
+      todo = "Puoi già decidere: i valori mancanti non cambiano la classifica. Completali solo se vuoi un report più preciso.";
+      act = "completa";
+    } else {
+      todo = "Puoi decidere: fissa una data, congela l'analisi e registra la scelta.";
+      act = "decidi";
+    }
+  }
+  return { trade, decide, decideItem: top, also: hot.slice(1, 3), calm: calm.slice(0, 4), todo, act };
+}
+
+/* ---------- Strade mancanti: falso dilemma ---------- */
+export type Dilemma = { msg: string; sugg: { kd: PlanKind; name: string; why: string }[] };
+const SQ = /\b(resto|rest[ao] (dove|com)|rifiut|lascio|lasciare|com'è|com’è|fermo|non (faccio|accetto|cambio)|niente|rimango|status quo)/i;
+export const isStatusQuo = (o: Opt) => SQ.test(o.name);
+
+export function falseDilemma(dec: Decision): Dilemma | null {
+  const opts = dec.model.options;
+  if (!opts.length) return null;
+  const has = (k: PlanKind) => opts.some((o) => o.kd === k);
+  const sq = opts.some(isStatusQuo);
+  const L = (opts.find((o) => !isStatusQuo(o) && (!o.kd || o.kd === "base")) ?? opts[0]).name;
+  const sugg: Dilemma["sugg"] = [];
+  if (!has("cond")) sugg.push({ kd: "cond", name: `${L}, solo a condizioni`, why: "Dici sì solo se le condizioni chiave (soldi, casa, tempi) sono garantite, meglio per iscritto." });
+  if (!has("prova")) sugg.push({ kd: "prova", name: `${L} in prova, con verifica e uscita`, why: "Provi per un periodo definito, con una data di verifica e un modo concreto per tornare indietro." });
+  if (!has("cerca") && sq) sugg.push({ kd: "cerca", name: "Non ora: cerco attivamente un'alternativa", why: "Restare fermo diventa una strada attiva: ricerca mirata, con una scadenza." });
+  const binary = opts.length <= 2;
+  if (!(binary || sq) || sugg.length < 2) return null;
+  const msg = sq && binary
+    ? `Stai confrontando «${L}» con il restare dove sei: quasi sempre è un falso dilemma. Le scelte reali hanno strade intermedie, che spesso sono le migliori.`
+    : binary ? "Ci sono solo due strade: probabilmente ne mancano." : "Manca almeno una strada intermedia tra sì e no.";
+  return { msg, sugg };
+}
+
+/* ---------- Decisione condizionata ---------- */
+export type CondKind = "utente" | "requisito" | "dato" | "liquidita" | "stimeAI" | "basi" | "doppio";
+export type CondView = { key: string; t: string; how: string; gate: boolean; kind: CondKind; optId?: string; condId?: string; st?: Cond["st"] };
+export type Ready = {
+  state: "vuota" | "nessuna" | "non_pronta" | "pronta";
+  lead?: { id: string; name: string };
+  fallback?: { id: string; name: string } | null;
+  open: CondView[]; done: CondView[]; failed: CondView[];
+  dilemma: Dilemma | null;
+};
+
+export function readiness(dec: Decision, r: DecResult, base: Resources = {}, rules: Rule[] = [], info?: InfoItem[]): Ready {
+  const dilemma = falseDilemma(dec);
+  const nm = normalize(dec.model);
+  if (nm.options.length < 2 || !nm.criteria.length) return { state: "vuota", open: [], done: [], failed: [], dilemma };
+  const ok = r.rows.filter((x) => !x.excluded.length);
+  if (!ok.length) return { state: "nessuna", open: [], done: [], failed: [], dilemma };
+  const L = ok[0];
+  const o = dec.model.options.find((x) => x.id === L.id)!;
+  // chi prevale se la prima cade
+  const mm: Model = JSON.parse(JSON.stringify(dec.model));
+  mm.options.find((x) => x.id === L.id)!.block = "esclusa per prova";
+  const fb = analyzeDecision({ ...dec, model: mm }).rows.find((x) => !x.excluded.length);
+  const fallback = fb ? { id: fb.id, name: fb.name } : null;
+  const open: CondView[] = [], done: CondView[] = [], failed: CondView[] = [];
+  const uc = (o.cond ?? []).map((c): CondView => ({ key: "u" + c.id, t: c.t, how: c.how || `Verifica: ${c.t}`, gate: !!c.gate, kind: "utente", optId: o.id, condId: c.id, st: c.st }));
+  uc.filter((c) => c.st === "si").forEach((c) => done.push(c));
+  // condizioni non soddisfatte di tutte le strade: spiegano perché una strada è uscita
+  for (const x of dec.model.options) for (const c of x.cond ?? []) if (c.st === "no")
+    failed.push({ key: "n" + c.id, t: x.id === o.id ? c.t : `${c.t} (${x.name}${c.gate ? ": esce" : ""})`, how: "", gate: !!c.gate, kind: "utente", optId: x.id, condId: c.id, st: "no" });
+  const uo = uc.filter((c) => c.st === "?");
+  uo.filter((c) => c.gate).forEach((c) => open.push(c));
+  for (const p of L.pending) open.push({ key: "p" + p, t: p.replace(": manca il dato", ""), how: `Trova il dato per «${p.replace(": manca il dato", "")}» e inseriscilo al passo «Valuta»`, gate: true, kind: "requisito", optId: L.id });
+  for (const i of (info ?? infoValue(dec)).filter((x) => x.flips).slice(0, 3))
+    open.push({ key: "d" + i.opt + i.crit,
+      t: i.cut && (i.cut.highId === L.id || i.cut.lowId === L.id)
+        ? `«${i.critName}» di ${i.optName} ${i.cut.highId === L.id ? i.cut.high : i.cut.low}${i.cur ? ` (oggi stimato ${i.cur})` : " (oggi manca)"}`
+        : `«${i.critName}» di ${i.optName}: ${i.text}`, how: i.kind === "manca" ? `Trova il valore di «${i.critName}» per ${i.optName}` : `Verifica «${i.critName}» di ${i.optName} (oggi stimato ${i.cur})`, gate: false, kind: "dato", optId: i.opt });
+  if (base.cash0 != null || base.cash_m != null) {
+    const map = new Map(dec.model.options.map((x) => [x.id, x] as const));
+    const sf = applyCombo([L.id], map, [], base, rules, 12, 0);
+    if (sf.viol.length) open.push({ key: "liq", t: `Anche se va male, entro 12 mesi non superi i tuoi limiti (oggi: ${sf.viol.join("; ")})`, how: "Prevedi un cuscinetto o una garanzia: anticipo, alloggio pagato, contratto più lungo, data di uscita", gate: false, kind: "liquidita", optId: L.id });
+  }
+  if ((o.impacts ?? []).some((i) => i.src === "ai")) open.push({ key: "ai", t: `Gli importi su soldi e tempo di ${L.name} sono confermati da te, non solo stimati dall'AI`, how: "Conferma o correggi gli importi al passo «Soldi e tempo»", gate: false, kind: "stimeAI", optId: L.id });
+  uo.filter((c) => !c.gate).forEach((c) => open.push(c));
+  const sol = solidity(dec, r);
+  if (sol && sol.estShare + sol.unkShare >= 50) open.push({ key: "basi", t: `Il punteggio di ${L.name} poggia su dati certi: oggi il ${sol.estShare + sol.unkShare}% viene da stime o valori senza fonte`, how: "Rendi certi i valori che pesano di più e indica da dove vengono", gate: false, kind: "basi", optId: L.id });
+  const dop = biasChecks(dec, r).find((b) => b.k === "doppio");
+  if (dop) open.push({ key: "dop", t: "Ogni beneficio conta una volta sola", how: dop.t, gate: false, kind: "doppio" });
+  return { state: open.length ? "non_pronta" : "pronta", lead: { id: L.id, name: L.name }, fallback, open, done, failed, dilemma };
+}
+
+/** Frase della regola di stop per una condizione che, se falsa, fa uscire la strada. */
+export const stopText = (rd: Ready) => `Se la risposta è no, ${rd.lead?.name} esce${rd.fallback ? ` e la scelta passa a ${rd.fallback.name}` : ""}: non serve approfondire oltre.`;

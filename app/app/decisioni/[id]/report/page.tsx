@@ -7,7 +7,7 @@ import { useWs } from "@/components/Workspace";
 import { ScoreBars, LineChart, Legend, PAL } from "@/components/charts";
 import {
   analyzeDecision, biasChecks, conclusive, cashBreakpoint, cashSeries, crossEffects, eur, fmt, hashOf, normalize, solidity, tradeoff, turningPoints,
-  LEVELS, SCEN, type Scen, untestedText } from "@/lib/engine";
+  LEVELS, SCEN, type Scen, untestedText, infoValue, readiness, focus, stopText, PHASES, PHASE_L, PLAN_L } from "@/lib/engine";
 import { actionPlan, consequences, projection, valueText, HZ } from "@/lib/narrative";
 import { compact } from "@/lib/ai";
 import { PRI } from "@/lib/priorities";
@@ -29,8 +29,10 @@ export default function Report() {
     const res = analyzeDecision(d);
     const nm = normalize(d.model);
     const turns = turningPoints(d, res);
-    return { res, nm, turns, concl: conclusive(d, res), trade: tradeoff(d, res), sol: solidity(d, res), bias: biasChecks(d, res), plan: actionPlan(d, res, turns, d.due) };
-  }, [d]);
+    const info = infoValue(d);
+    return { res, nm, turns, concl: conclusive(d, res), trade: tradeoff(d, res), sol: solidity(d, res), bias: biasChecks(d, res), plan: actionPlan(d, res, turns, d.due),
+      rd: readiness(d, res, R, rules, info), foc: focus(d, res, turns, info) };
+  }, [d, R, rules]);
   // titolo della pagina = nome proposto per il PDF quando lo salvi
   useEffect(() => {
     if (!d) return;
@@ -39,7 +41,8 @@ export default function Report() {
     return () => { document.title = prev; };
   }, [d]);
   if (!d || !data) return <div className="empty">Decisione non trovata. <Link href="/app/decisioni">Torna all&apos;elenco</Link></div>;
-  const { res, nm, turns, concl, trade, sol, bias, plan } = data;
+  const { res, nm, turns, concl, trade, sol, bias, plan, rd, foc } = data;
+  const ST: Record<string, string> = { "?": "da verificare", si: "verificata", no: "non soddisfatta" };
   const m = d.model;
   const ok = res.rows.filter((r) => !r.excluded.length);
   const top = ok[0];
@@ -89,26 +92,28 @@ export default function Report() {
           </div>
         </header>
 
-        {/* SINTESI */}
-        <section className="rep-sum">
-          <div className="rep-kicker">In sintesi</div>
-          {!top ? <p className="big">Nessuna alternativa rispetta tutti i requisiti fissati.</p> : (
+        {/* SINTESI: decisione condizionata */}
+        <section className={`rep-sum ${rd.state}`}>
+          <div className="rep-kicker">Decisione</div>
+          <p className="rep-state">{rd.state === "pronta" ? "Pronta" : rd.state === "non_pronta" ? "Non ancora pronta" : rd.state === "nessuna" ? "Nessuna strada regge" : "Da impostare"}</p>
+          {rd.state === "non_pronta" && rd.lead && (
             <>
-              {concl.ok
-                ? <p className="big">Con le priorità indicate prevale <b>{top.name}</b>: {gap}.{missing ? ` Resta prima anche nel caso peggiore dei ${missing} valori mancanti.` : ""}</p>
-                : concl.pend ? <p className="big">Classifica provvisoria: <b>{concl.pend.name}</b> è davanti ma non ha ancora superato un requisito obbligatorio ({concl.pend.req.join("; ")}). Se non lo rispetta viene scartata e la classifica cambia.</p>
-                : <p className="big">Classifica provvisoria: i dati non bastano per una conclusione. Mancano {missing} valori (fino al {concl.missW}% del peso) e potrebbe prevalere {concl.contenders.join(" oppure ")}.</p>}
-              <dl>
-                <dt>Perché</dt><dd>Pesano soprattutto {drivers.map((x) => `«${x}»`).join(" e ") || "—"}.</dd>
-                {turns[0] && <><dt>A una condizione</dt><dd>{turns[0].text}</dd></>}
-                {trade?.risks[0] && <><dt>Rischio principale</dt><dd>{trade.risks[0]}</dd></>}
-                {sol && <><dt>Solidità</dt><dd>{!sol.tested ? "Basato su dati certi o dichiarati." : sol.holds ? `Regge anche con stime sbagliate del ${sol.pct * 100}%.` : `Fragile: con stime sbagliate del ${sol.pct * 100}% vincerebbe ${sol.newTop}.`} {sol.estShare + sol.unkShare > 50 ? `Il ${sol.estShare + sol.unkShare}% del punteggio poggia su stime o dati senza fonte.` : ""}</dd></>}
-                {bias[0] && <><dt>Attenzione</dt><dd>{bias[0].t}</dd></>}
-                <dt>Prossimo passo</dt><dd>{plan[0]}</dd>
-              </dl>
+              <p className="big">«{rd.lead.name}» è potenzialmente la strada migliore per le priorità indicate, <b>ma solo se</b>:</p>
+              <ol className="rep-conds">{rd.open.map((c) => <li key={c.key}>{c.t}{c.gate ? <b> (vincolante)</b> : null}</li>)}</ol>
+              {rd.fallback && <p>Se queste condizioni non si verificano, la scelta cambia: allora prevale <b>{rd.fallback.name}</b>.</p>}
             </>
           )}
-          <p className="rep-note">Questo report non decide al posto tuo: mostra cosa prevale secondo le priorità che hai indicato, a quali condizioni e con quali rischi.</p>
+          {rd.state === "pronta" && rd.lead && <p className="big">Con i dati di oggi la strada che rispetta meglio le priorità indicate è <b>{rd.lead.name}</b>{rd.done.length ? ", con le sue condizioni verificate" : ""}. Nessun dato incerto può ribaltarla.</p>}
+          {rd.state === "nessuna" && <p className="big">Nessuna strada rispetta i requisiti e le condizioni vincolanti fissate.</p>}
+          {rd.state === "vuota" && <p className="big">Servono almeno due strade e un criterio per un&apos;analisi.</p>}
+          <dl>
+            {foc && <><dt>La scelta vera</dt><dd>{foc.trade}</dd></>}
+            {rd.dilemma && <><dt>Strade mancanti</dt><dd>{rd.dilemma.msg} Da considerare: {rd.dilemma.sugg.map((x) => `«${x.name}»`).join(", ")}.</dd></>}
+            {foc && foc.calm.length > 0 && <><dt>Non cambia la scelta</dt><dd>{foc.calm.map((x) => `«${x.critName}» di ${x.optName}`).join(", ")}: qualunque valore plausibile abbiano.</dd></>}
+            {rd.failed.length > 0 && <><dt>Non soddisfatte</dt><dd>{rd.failed.map((c) => c.t).join("; ")}.</dd></>}
+            {rd.done.length > 0 && <><dt>Già verificate</dt><dd>{rd.done.map((c) => c.t).join("; ")}.</dd></>}
+          </dl>
+          <p className="rep-note">Questo report non decide al posto tuo: dice a quali condizioni una strada regge, cosa verificare prima e in che ordine. Il punteggio è solo una parte dell&apos;analisi (sezione «Il confronto»).</p>
         </section>
 
         {/* PREMESSA */}
@@ -136,9 +141,41 @@ export default function Report() {
           <div className="rep-pri">{Object.keys(PRI).map((k) => <span key={k}>{PRI[k].l} <b>{ws.profile.priorities[k] ?? 3}/5</b></span>)}</div>
         </section>
 
+        {/* PIANO ORDINATO */}
+        {rd.open.length > 0 && (
+          <section className="rsec">
+            <H t="Piano d'azione: prima di rispondere, in quest'ordine" />
+            <ol className="rep-steps">
+              {rd.open.map((c) => <li key={c.key}><Square size={14} /> <span><b>{c.how}</b>{c.kind === "utente" || c.kind === "dato" ? <><br /><small className="muted">Serve per: {c.t}</small></> : null}{c.gate && <><br /><small className="rep-stop">{stopText(rd)}</small></>}</span></li>)}
+              <li><Square size={14} /> <span><b>Poi aggiorna i dati in Decision OS:</b> il risultato si ricalcola e ti dice se la decisione è pronta.</span></li>
+            </ol>
+          </section>
+        )}
+
+        {/* CONSEGUENZE NEL TEMPO */}
+        <section className="rsec">
+          <H t="Se scegli questa strada, cosa succede dopo" />
+          {!m.options.some((o) => (o.tl ?? []).length || (o.cond ?? []).length) ? <p className="muted">Le conseguenze nel tempo non sono ancora state descritte (passo «Conseguenze»).</p> : m.options.map((o, i) => (
+            <div key={o.id} className="rep-alt">
+              <h3 style={{ margin: 0 }}><span className="optbadge sm" style={{ background: PAL[i % PAL.length] }}>{String.fromCharCode(65 + i)}</span> {o.name}{o.kd && o.kd !== "base" ? <small className="muted"> · {PLAN_L[o.kd]}</small> : null}</h3>
+              {(o.tl ?? []).length > 0 && (
+                <div className="rep-tl">
+                  {PHASES.map((h) => (
+                    <div key={h}><b>{PHASE_L[h]}</b><ul>{(o.tl ?? []).filter((x) => x.h === h).map((x, k) => <li key={k}>{x.t}{x.src === "ai" ? <span className="aitag">AI</span> : null}</li>)}{!(o.tl ?? []).some((x) => x.h === h) && <li className="muted">—</li>}</ul></div>
+                  ))}
+                </div>
+              )}
+              <div className="rep-grid2">
+                {(o.cond ?? []).length > 0 && <div><b>Ha senso solo se</b><ul>{(o.cond ?? []).map((c) => <li key={c.id}>{c.t} <small className="muted">({ST[c.st]}{c.gate ? ", vincolante" : ""})</small></li>)}</ul></div>}
+                {(o.next ?? []).length > 0 && <div><b>Ti costringe a decidere poi</b><ul>{(o.next ?? []).map((x) => <li key={x}>{x}</li>)}</ul></div>}
+              </div>
+            </div>
+          ))}
+        </section>
+
         {/* ALTERNATIVE */}
         <section className="rsec">
-          <H t="Le alternative e cosa comporterebbero" />
+          <H t="Pro, contro e cosa comporterebbero in cifre" />
           {m.options.map((o, i) => {
             const row = res.rows.find((x) => x.id === o.id)!;
             const cons = consequences(d, res, o, others, ws.deps, R, rules);
@@ -184,7 +221,7 @@ export default function Report() {
 
         {/* CONFRONTO */}
         <section className="rsec">
-          <H t="Il confronto" />
+          <H t="Il confronto (punteggio)" />
           <table className="rt">
             <thead><tr><th>Aspetto</th>{m.options.map((o) => <th key={o.id}>{o.name}</th>)}</tr></thead>
             <tbody>
@@ -289,7 +326,7 @@ export default function Report() {
 
         {/* PIANO */}
         <section className="rsec">
-          <H t="Piano d'azione prima di decidere" />
+          <H t="Altre verifiche e data della decisione" />
           <ul className="rep-check">{plan.map((p, i) => <li key={i}><Square size={15} /> <span>{p}</span></li>)}</ul>
           {(m.assumptions ?? []).filter((a) => a.rel !== "?").length > 0 && (
             <>

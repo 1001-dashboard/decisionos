@@ -25,19 +25,26 @@ const BASE = "Sei l'analista critico di Decision OS. Italiano, conciso, concreto
 
 const P: Record<string, { s: string; max: number }> = {
   struttura: {
-    max: 2200,
+    max: 3600,
     s: `Prepara il quadro di una decisione dal racconto. NON dire mai cosa scegliere: suggerisci cosa guardare. JSON:
 {"n":"titolo breve","k":"tipo di scelta: lavoro|casa|acquisto|soldi|progetto|relazioni|famiglia|salute|studio|morale|altro",
 "x":"in 1 frase cosa conta poco in questa scelta e perché (es. per una scelta morale i soldi pesano poco), oppure vuoto",
 "serve":true se mancano informazioni senza cui il quadro è fuorviante,
 "q":["max 3 domande mirate, solo se servono"],
-"a":[{"n":"alternativa","p":["pro concreti, max 3, brevi"],"m":["contro concreti, max 3, brevi"]}],
+"a":[{"n":"strada","kd":"base|cond|prova|cerca","p":["pro concreti, max 3, brevi"],"m":["contro concreti, max 3, brevi"],"tl":[{"h":1|3|6|12 mesi,"a":"soldi|tempo|famiglia|lavoro|casa|progetti|rischi","t":"cosa succede concretamente"}],"nx":["decisione che questa strada costringe a prendere dopo"],"cd":[{"t":"condizione verificabile perché la strada abbia senso, con soglia se il racconto la dà","h":"azione concreta per verificarla","g":true se senza di essa la strada non ha senso}]}],
 "c":[{"n":"criterio","y":"perché conta in questa scelta, 1 riga","t":"num se misurabile (soldi, tempo, km) altrimenti g","u":"unità se num, es. €/mese","p":valore pessimo se num,"o":valore ottimo se num,"i":importanza 1-5}],
 "v":[{"c":"nome criterio","min":soglia,"max":soglia,"n":"vincolo non negoziabile detto dall'utente"}],
 "s":[{"a":"alternativa","c":"criterio","v":valore reale se num oppure livello 0-4 se g,"y":"motivo breve"}],
 "mi":[{"a":"alternativa","r":"cash0|cash_m|hours_w","v":[sfav,centr,fav],"t":"tag se costo una tantum condiviso"}],
 "i":[{"t":"dato o ipotesi da verificare","k":"F|D|S|?","a":"alta|media|bassa"}]}
-Regole: 2-3 alternative reali, includi lasciare tutto com'è e una via di mezzo se plausibili. 3-5 criteri adatti al TIPO di scelta, niente doppioni; per scelte morali o relazionali usa giudizi su valori, effetti sulle persone, coerenza con sé, rimorso; criteri economici solo se contano davvero. Importanze: parti da pr (priorità utente 1-5, chiavi soldi, stabilita, crescita, indipendenza, benessere) e dalle risposte r; senza questi usa 3. Pro e contro: specifici del racconto più buon senso, sono spunti da verificare, mai inventare fatti. s solo se il racconto dà basi. Soglie vincoli: unità reali se num, livello 0-4 se g (0 pessimo, 4 ottimo). cash0 = una tantum € (negativo se spesa), cash_m = variazione €/mese netta, hours_w = ore/settimana consumate (negativo). k: F verificato, D dichiarato, S stima, ? mancante.`,
+Regole: le alternative sono PIANI, non sì/no. Oltre alla strada base, includi se plausibili: la stessa solo a condizioni (kd cond), una prova a tempo con verifica e uscita (kd prova), la ricerca attiva di altro invece di stare fermi (kd cerca). Max 5 strade. Negoziare non è una strada: mettilo nelle azioni h delle condizioni. tl: 2-4 tappe per strada sulla vita reale (casa, famiglia, lavoro, tempo), non solo soldi. cd: 2-4 per strada, specifiche e verificabili; g true solo se la strada cade senza. nx: le decisioni successive che la strada genera. 3-5 criteri adatti al TIPO di scelta, niente doppioni; per scelte morali o relazionali usa giudizi su valori, effetti sulle persone, coerenza con sé, rimorso; criteri economici solo se contano davvero. Importanze: parti da pr (priorità utente 1-5, chiavi soldi, stabilita, crescita, indipendenza, benessere) e dalle risposte r; senza questi usa 3. Pro e contro: specifici del racconto più buon senso, sono spunti da verificare, mai inventare fatti. s solo se il racconto dà basi. Soglie vincoli: unità reali se num, livello 0-4 se g (0 pessimo, 4 ottimo). cash0 = una tantum € (negativo se spesa), cash_m = variazione €/mese netta, hours_w = ore/settimana consumate (negativo). k: F verificato, D dichiarato, S stima, ? mancante.`,
+  },
+  strade: {
+    max: 2600,
+    s: `Strade e conseguenze di una decisione esistente. Le scelte reali raramente sono sì/no: cerca le strade mancanti (solo a condizioni, prova a tempo con uscita, ricerca attiva di altro) e completa quelle esistenti. Non dire cosa scegliere. JSON:
+{"x":"se le strade attuali sono un falso dilemma, perché in 1 frase, altrimenti vuoto",
+"a":[{"n":"strada","kd":"base|cond|prova|cerca","p":["pro concreti, max 3, brevi"],"m":["contro concreti, max 3, brevi"],"tl":[{"h":1|3|6|12 mesi,"a":"soldi|tempo|famiglia|lavoro|casa|progetti|rischi","t":"cosa succede concretamente"}],"nx":["decisione che questa strada costringe a prendere dopo"],"cd":[{"t":"condizione verificabile perché la strada abbia senso, con soglia se il racconto la dà","h":"azione concreta per verificarla","g":true se senza di essa la strada non ha senso}]}]}
+Regole: ripeti le strade esistenti con lo stesso nome n per completarne tl, nx, cd; aggiungi max 3 strade nuove. Negoziare non è una strada: va nelle azioni h. tl sulla vita reale, non solo soldi. Non inventare cifre: soglie solo se presenti nei dati.`,
   },
   dati: { max: 900, s: `Analisi dei dati. Separa fatti verificati, dichiarati, stime, mancanti. Trova contraddizioni e cifre che non tornano. JSON {"p":["punto"],"c":"conclusione 1-2 frasi"}` },
   contro: { max: 900, s: `Contraddittorio. Dai il miglior argomento CONTRO l'alternativa in testa, verifica alternative ignorate, metti alla prova ipotesi e pesi. JSON {"p":["obiezione"],"c":"conclusione 1-2 frasi"}` },

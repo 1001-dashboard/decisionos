@@ -21,7 +21,7 @@ const DOMANDE = [
 
 const AMBIENTI = [
   ["Panoramica", "La tua situazione", "Decisioni aperte, vincoli, scadenze, risorse.", <LayoutDashboard key="a" size={22} />],
-  ["Decisioni", "Confronta le opzioni", "Una procedura guidata in 5 passi, con valori reali o giudizi.", <GitFork key="b" size={22} />],
+  ["Decisioni", "Confronta le opzioni", "Una procedura guidata in 6 passi: strade, conseguenze, condizioni, poi il confronto.", <GitFork key="b" size={22} />],
   ["Connessioni", "Effetti tra le scelte", "Conflitti, requisiti e costi condivisi.", <Link2 key="c" size={22} />],
   ["Scenari", "Simula il futuro", "Da 3 mesi a 5 anni, tre scenari. Proiezioni, non previsioni.", <TrendingUp key="d" size={22} />],
   ["Analista AI", "Analisi critica", "Dal racconto al quadro: domande, pro e contro, criteri spiegati. Poi il parere contrario.", <Bot key="e" size={22} />],
@@ -29,11 +29,12 @@ const AMBIENTI = [
 ] as const;
 
 const STEPS = [
-  ["Alternative", "Le strade reali, compreso lasciare tutto com'è. Parti da un modello o racconta la situazione all'Analista."],
+  ["Strade", "Non solo sì o no: anche «solo a condizioni», una prova con uscita, cercare altro. Se vedi un falso dilemma, Decision OS te lo dice."],
+  ["Conseguenze", "Cosa succede entro 30 giorni, 3, 6 e 12 mesi su casa, famiglia, lavoro e soldi. Cosa deve essere vero perché la strada abbia senso."],
   ["Cosa conta", "Gli aspetti che ti interessano, quanto contano da 1 a 5 e i limiti che non accetti di superare."],
   ["Valuta", "Valori reali (€, ore, km) o giudizi da Pessimo a Ottimo, con la fonte di ogni dato."],
   ["Soldi e tempo", "Spese iniziali e differenze mensili: quanti mesi reggi e cosa succede se va male."],
-  ["Risultato", "Verdetto in chiaro, cosa guadagni e a cosa rinunci, solidità delle stime, effetti sulle altre scelte."],
+  ["Decisione", "Pronta o non ancora pronta: a quali condizioni regge la strada in testa, cosa verificare prima e in che ordine, cosa cambia se una condizione cade."],
 ];
 
 const REGOLE = [
@@ -94,7 +95,7 @@ export default function Landing() {
             ))}
           </div>
           <div style={{ marginTop: 40 }}>
-            <h3>Ogni decisione in 5 passi</h3>
+            <h3>Ogni decisione in 6 passi</h3>
             <div className="steps" style={{ marginTop: 12 }}>
               {STEPS.map(([t, d]) => <div key={t} className="card"><h3 style={{ marginBottom: 4 }}>{t}</h3><p className="muted" style={{ margin: 0, fontSize: 14 }}>{d}</p></div>)}
             </div>
@@ -120,7 +121,7 @@ export default function Landing() {
         <div className="wrap">
           <div className="head">
             <h2>Prova la demo: un&apos;offerta di lavoro all&apos;estero</h2>
-            <p>È il passo «Risultato» della piattaforma, con dati dimostrativi: tre alternative di lavoro e un progetto personale che compete per tempo e soldi. Cambia l&apos;importanza dei criteri e guarda verdetto, soglie ed effetti ricalcolarsi. Lo stesso metodo vale per una casa, un fornitore, un investimento.</p>
+            <p>È la parte di confronto del passo «Decisione», con dati dimostrativi: tre alternative di lavoro e un progetto personale che compete per tempo e soldi. Cambia l&apos;importanza dei criteri e guarda verdetto, soglie ed effetti ricalcolarsi. Lo stesso metodo vale per una casa, un fornitore, un investimento.</p>
           </div>
           <LandingDemo />
         </div>

@@ -11,7 +11,7 @@ import { useWs } from "@/components/Workspace";
 import { Top } from "@/components/Shell";
 import { ai, structToModel, type AiStruct } from "@/lib/ai";
 import { exampleDecision } from "@/lib/demo";
-import { uid, weightsFromImp, redactMoney, type Model } from "@/lib/engine";
+import { uid, weightsFromImp, redactMoney, PLAN_L, type Model } from "@/lib/engine";
 
 const TI: Record<string, React.ReactNode> = { briefcase: <Briefcase size={20} />, home: <Home size={20} />, car: <Car size={20} />, rocket: <Rocket size={20} />, package: <Package size={20} />, users: <Users size={20} />, graduation: <GraduationCap size={20} />, piggy: <PiggyBank size={20} /> };
 const REL = { F: ["ok", "verificato"], D: ["info", "dichiarato"], S: ["warn", "stima"], "?": ["bad", "da chiarire"] } as const;
@@ -108,18 +108,25 @@ export default function Nuova() {
               )}
 
               <div>
-                <label className="f">Le strade possibili, con pro e contro</label>
+                <label className="f">Le strade possibili (non solo sì o no), con pro e contro</label>
                 <div className="stack" style={{ gap: 8 }}>
                   {draft.model.options.map((o) => (
                     <div key={o.id} className="altbox">
                       <div className="row between" style={{ flexWrap: "nowrap" }}>
                         <input value={o.name} onChange={(x) => edit((m) => { m.options.find((y) => y.id === o.id)!.name = x.target.value; })} style={{ fontWeight: 600 }} />
+                        {o.kd && o.kd !== "base" && <span className="pill teal" style={{ flex: "none" }}>{PLAN_L[o.kd]}</span>}
                         <button className="iconbtn" title="Togli" onClick={() => edit((m) => { m.options = m.options.filter((y) => y.id !== o.id); })}><X size={15} /></button>
                       </div>
                       <div className="pc">
                         <ul className="pro">{(o.pro ?? []).map((p) => <li key={p}><ThumbsUp size={13} /> {p}</li>)}</ul>
                         <ul className="con">{(o.con ?? []).map((p) => <li key={p}><ThumbsDown size={13} /> {p}</li>)}</ul>
                       </div>
+                      {((o.tl ?? []).length > 0 || (o.cond ?? []).length > 0) && (
+                        <small className="muted" style={{ display: "block", marginTop: 4 }}>
+                          {(o.tl ?? []).length ? `${o.tl!.length} conseguenze nel tempo` : ""}{(o.tl ?? []).length && (o.cond ?? []).length ? " · " : ""}
+                          {(o.cond ?? []).length ? `solo se: ${o.cond!.slice(0, 2).map((c) => c.t).join("; ")}${o.cond!.length > 2 ? "…" : ""}` : ""}
+                        </small>
+                      )}
                     </div>
                   ))}
                 </div>

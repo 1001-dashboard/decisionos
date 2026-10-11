@@ -1,5 +1,5 @@
 import { BP } from "./bp.ts";
-import { uid, LEVELS, levelOf, isMoneyCrit, redactMoney, normalize, type Decision, type DecResult, type Model, type Rel, type Resources } from "./engine.ts";
+import { uid, LEVELS, levelOf, isMoneyCrit, redactMoney, normalize, type Decision, type DecResult, type Model, type Rel, type Resources, type Opt, type Phase, type PlanKind } from "./engine.ts";
 
 export async function ai<T = unknown>(mode: string, payload: unknown): Promise<T> {
   const r = await fetch(`${BP}/api/ai`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode, payload }) });
@@ -39,6 +39,8 @@ export function compact(d: Decision, r: DecResult | undefined, opts: { eco: bool
         return [c.name, o.s[c.id] == null ? null : c.kind === "g" ? LEVELS[levelOf(o.s[c.id])] : o.s[c.id]];
       })),
       y: Object.fromEntries(Object.entries(o.m ?? {}).filter(([, x]) => x.why).map(([k, x]) => [m.criteria.find((c) => c.id === k)?.name ?? k, `${tx(x.why)} [${x.rel ?? "D"}]`])),
+      ...(o.kd && o.kd !== "base" ? { kd: o.kd } : {}),
+      ...(o.cond?.length ? { cd: o.cond.map((c) => `${tx(c.t)} [${c.st}${c.gate ? ",vincolante" : ""}]`) } : {}),
       ...((o.pro?.length || o.con?.length) ? { pc: [(o.pro ?? []).map((x) => tx(x)), (o.con ?? []).map((x) => tx(x))] } : {}),
       ...(opts.eco ? { im: (o.impacts ?? []).map((i) => [i.r, i.v, i.src === "ai" ? "stima AI" : ""]) } : {}),
     })),
@@ -52,9 +54,52 @@ export function compact(d: Decision, r: DecResult | undefined, opts: { eco: bool
   };
 }
 
+/** Strada proposta dall'AI: tipo di piano, conseguenze nel tempo, decisioni generate, condizioni. */
+export type AiPlan = {
+  n: string; kd?: string; p?: string[]; m?: string[];
+  tl?: { h?: number; a?: string; t?: string }[]; nx?: string[]; cd?: { t?: string; h?: string; g?: boolean }[];
+};
+export type AiStrade = { x?: string; a?: AiPlan[] };
+
+const KD = ["base", "cond", "prova", "cerca"];
+const AR = ["soldi", "tempo", "famiglia", "lavoro", "casa", "progetti", "rischi"];
+/** Converte in modo difensivo la parte «piano» di una strada proposta dall'AI. Tutto resta marcato come proposto dall'AI. */
+export function planFromAi(o: Partial<AiPlan>): Pick<Opt, "kd" | "tl" | "next" | "cond"> {
+  const tx = (v: unknown, n = 160) => (typeof v === "string" ? v.trim().slice(0, n) : "");
+  const tl = arr<NonNullable<AiPlan["tl"]>[0]>(o.tl).filter((x) => x && tx(x.t)).slice(0, 8).map((x) => {
+    const h = [1, 3, 6, 12].reduce((a, b) => (Math.abs(b - Number(x.h ?? 3)) < Math.abs(a - Number(x.h ?? 3)) ? b : a), 3);
+    return { h, a: (AR.includes(String(x.a)) ? x.a : undefined) as Phase["a"], t: tx(x.t), src: "ai" as const };
+  });
+  const next = arr<string>(o.nx).map((x) => tx(x, 140)).filter(Boolean).slice(0, 5);
+  const cond = arr<NonNullable<AiPlan["cd"]>[0]>(o.cd).filter((x) => x && tx(x.t)).slice(0, 5).map((x) => ({
+    id: uid(), t: tx(x.t), how: tx(x.h) || undefined, gate: x.g === true, st: "?" as const, src: "ai" as const }));
+  return { kd: (KD.includes(String(o.kd)) ? o.kd : "base") as PlanKind, ...(tl.length ? { tl } : {}), ...(next.length ? { next } : {}), ...(cond.length ? { cond } : {}) };
+}
+
+/** Unisce le strade proposte dall'AI al modello: completa quelle esistenti (solo dove vuote) e aggiunge le nuove. */
+export function mergeStrade(m: Model, x: AiStrade): { model: Model; added: string[] } {
+  const mm: Model = structuredClone(m);
+  const added: string[] = [];
+  for (const a of arr<AiPlan>(x.a).filter((a) => a && typeof a.n === "string" && a.n.trim()).slice(0, 6)) {
+    const pl = planFromAi(a);
+    const ex = mm.options.find((o) => norm(o.name) === norm(a.n));
+    if (ex) {
+      if (!ex.tl?.length && pl.tl) ex.tl = pl.tl;
+      if (!ex.next?.length && pl.next) ex.next = pl.next;
+      if (!ex.cond?.length && pl.cond) ex.cond = pl.cond;
+      if (!ex.kd) ex.kd = pl.kd;
+    } else if (mm.options.length < 6) {
+      const sh = (l?: string[]) => arr<string>(l).filter((t) => typeof t === "string" && t.trim()).slice(0, 4).map((t) => t.trim().slice(0, 140));
+      mm.options.push({ id: uid(), name: a.n.trim().slice(0, 80), s: {}, raw: {}, pro: sh(a.p), con: sh(a.m), ...pl });
+      added.push(a.n.trim());
+    }
+  }
+  return { model: mm, added };
+}
+
 export type AiStruct = {
   n?: string; k?: string; x?: string; serve?: boolean;
-  a?: (string | { n: string; p?: string[]; m?: string[] })[];
+  a?: (string | AiPlan)[];
   mi?: { a: string; r: string; v: number | number[]; t?: string }[];
   c?: { n: string; w?: number; t?: string; u?: string; p?: number; o?: number; i?: number; g?: string; y?: string }[];
   v?: { c: string; min?: number; max?: number; n?: string }[];
@@ -77,10 +122,10 @@ export function structToModel(x: AiStruct): { name: string; model: Model; questi
   const crit = (id: string) => criteria.find((c) => c.id === id)!;
   const cid = (n: string) => criteria.find((c) => norm(c.name) === norm(n))?.id;
   const short = (l?: string[]) => arr<string>(l).filter((t) => typeof t === "string" && t.trim()).slice(0, 4).map((t) => t.trim().slice(0, 140));
-  const options = arr<NonNullable<AiStruct["a"]>[0]>(x.a).filter((a) => typeof a === "string" || (a && typeof a.n === "string")).slice(0, 3).map((a) => {
-    const o = typeof a === "string" ? { n: a } : a;
+  const options = arr<NonNullable<AiStruct["a"]>[0]>(x.a).filter((a) => typeof a === "string" || (a && typeof a.n === "string")).slice(0, 5).map((a) => {
+    const o: AiPlan = typeof a === "string" ? { n: a } : a;
     return { id: uid(), name: o.n, s: {} as Record<string, number>, raw: {} as Record<string, number>, m: {} as NonNullable<Model["options"][0]["m"]>,
-      impacts: [] as NonNullable<Model["options"][0]["impacts"]>, pro: short((o as { p?: string[] }).p), con: short((o as { m?: string[] }).m) };
+      impacts: [] as NonNullable<Model["options"][0]["impacts"]>, pro: short(o.p), con: short(o.m), ...planFromAi(o) };
   });
   const oid = (n: string) => options.find((o) => norm(o.name) === norm(n));
   for (const s of arr<NonNullable<AiStruct["s"]>[0]>(x.s)) {

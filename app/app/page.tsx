@@ -4,7 +4,7 @@ import { Plus, Wallet, Clock, AlertTriangle, CalendarClock, GitFork, ArrowRight,
 import { useWs } from "@/components/Workspace";
 import { useAnalysis } from "@/components/useAnalysis";
 import { Top } from "@/components/Shell";
-import { conclusive, eur, fmt, RES_LABEL } from "@/lib/engine";
+import { eur, fmt, readiness, RES_LABEL } from "@/lib/engine";
 import ReportView from "@/components/ReportView";
 
 export default function Dashboard() {
@@ -58,8 +58,12 @@ export default function Dashboard() {
                 <div className="row between" style={{ padding: "10px 0", borderBottom: "1px solid var(--line)" }}>
                   <div><strong>{d.name}</strong><div className="muted" style={{ fontSize: 13 }}>{d.model.options.length} alternative · {d.model.criteria.length} criteri{d.due ? ` · entro ${new Date(d.due).toLocaleDateString("it-IT")}` : ""}</div></div>
                   <div className="row" style={{ gap: 6 }}>
-                    {!t ? <span className="pill bad">nessuna ammissibile</span> : conclusive(d, a).ok ? <span className="pill info">{t.name} {fmt(t.score)}</span> : <span className="pill warn">provvisoria: mancano dati</span>}
-                    {a.tie ? <span className="pill bad">parità</span> : a.fragile.length ? <span className="pill warn">fragile</span> : a.sens.length ? <span className="pill ok">robusta</span> : null}
+                    {(() => {
+                      const rd = readiness(d, a, profile.resources, profile.rules);
+                      if (!t || rd.state === "nessuna") return <span className="pill bad">nessuna strada regge</span>;
+                      if (rd.state === "vuota") return <span className="pill info">da impostare</span>;
+                      return rd.state === "pronta" ? <span className="pill ok">pronta: {t.name}</span> : <span className="pill warn">non pronta: {rd.open.length} da verificare</span>;
+                    })()}
                     <ArrowRight size={16} className="muted" />
                   </div>
                 </div>
