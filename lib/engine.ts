@@ -91,6 +91,8 @@ export type Model = {
   scartate?: { kd: PlanKind; name: string; why?: string; at: string }[];
   /** il tuo bilancio di oggi, al mese: punto di partenza dei conti di ogni strada */
   oggi?: Line[];
+  /** hai dichiarato: «non esistono altre strade realisticamente perseguibili» */
+  closed?: { at: string; why?: string };
   /** costo del non decidere: € al mese che perdi aspettando, e cosa succede */
   wait?: { m?: number | null; t?: string };
   /** valore dell'informazione: per ogni dato che può ribaltare la scelta, quanto costa saperlo */
@@ -751,7 +753,8 @@ export function falseDilemma(dec: Decision): Dilemma | null {
   ];
   for (const c of cand) if (!has(c.kd, c.name)) sugg.push(c);
   const binary = opts.length <= 2;
-  if (!(binary || sq) || sugg.length < 2) return null;
+  // resta visibile finché c'è anche una sola strada plausibile non considerata, oppure finché non dichiari che non ce ne sono altre
+  if (dec.model.closed || !(binary || sq) || !sugg.length) return null;
   const msg = sq && binary
     ? `Stai confrontando «${L}» con il restare dove sei: quasi sempre è un falso dilemma. Le scelte reali hanno strade intermedie, che spesso sono le migliori.`
     : binary ? "Ci sono solo due strade: probabilmente ne mancano." : "Manca almeno una strada intermedia tra sì e no.";
@@ -772,6 +775,8 @@ export type Ready = {
   open: CondView[]; done: CondView[]; failed: CondView[];
   dilemma: Dilemma | null;
   wait?: WaitView;
+  /** strada registrata come scelta (dal Registro) */
+  chosen?: { id: string; name: string; wasLead: boolean; open: number };
 };
 
 export function readiness(dec: Decision, r: DecResult, base: Resources = {}, rules: Rule[] = [], info?: InfoItem[]): Ready {
@@ -837,10 +842,16 @@ export function readiness(dec: Decision, r: DecResult, base: Resources = {}, rul
       open.push({ key: "sc" + x.id, t: `Lo scenario «se va male» di ${x.name} ipotizza ${od.sf} €/mese contro ${od.c} €/mese probabili: sembra un altro evento (es. perdere lo stipendio), non una variazione della stessa strada`, how: `Correggi «se va male» di ${x.name} al passo «Soldi e tempo» con una variazione realistica (es. affitto più alto); se temi di perdere il lavoro, rendilo una strada o un rischio a parte`, gate: false, kind: "scenario", grp: "chiarire", optId: x.id });
   }
   // un falso dilemma impedisce «Pronta»: la scelta migliore tra strade incomplete non è una decisione pronta
-  if (dilemma) open.push({ key: "dil", t: `Stai confrontando solo poche strade: ${dilemma.msg}`, how: `Aggiungi almeno una strada intermedia al passo «Strade» (${dilemma.sugg.map((x) => `«${x.name}»`).join(", ")}) oppure scarta esplicitamente quelle proposte`, gate: false, kind: "dilemma", grp: "chiarire" });
-  const rv = revCheck(dec, r);
+  if (dilemma) open.push({ key: "dil", t: `Stai confrontando solo poche strade: ${dilemma.msg}`, how: `Al passo «Strade» aggiungi o segna come non perseguibili le strade proposte (${dilemma.sugg.map((x) => `«${x.name}»`).join(", ")}), oppure dichiara che non esistono altre strade realisticamente perseguibili`, gate: false, kind: "dilemma", grp: "chiarire" });
+  const rv = revCheck(dec, r, base);
   if (rv) open.push({ key: "rev", t: rv.t, how: rv.how, gate: false, kind: "rev", grp: "chiarire", optId: L.id });
-  return { wait: wv, state: open.length ? "non_pronta" : "pronta", lead: { id: L.id, name: L.name }, fallback, open, done, failed, dilemma };
+  const lrv = revOf(o, base);
+  if (lrv?.capHigh) open.push({ key: "cap", t: `${lrv.label}: anche se torni indietro, quei soldi li perdi`, how: `Riduci il capitale a rischio di «${L.name}» (prova più piccola, anticipo minore, recesso) o accetta consapevolmente di poterlo perdere`, gate: false, kind: "rev", grp: "chiarire", optId: L.id });
+  // 2. «da verificare» non è un'etichetta: la strada in testa non può essere una decisione pronta finché non la verifichi
+  if (o.st === "verifica") open.push({ key: "ver", t: `«${L.name}» è segnata come da verificare: non è ancora validata`, how: `Completa la verifica di «${L.name}», poi riportala ad «Attiva» (o segnala non perseguibile)`, gate: false, kind: "utente", grp: "chiarire", optId: L.id });
+  const ch = dec.model.options.find((x) => x.st === "scelta");
+  const chosen = ch ? { id: ch.id, name: ch.name, wasLead: ch.id === L.id, open: ch.id === L.id ? open.length : -1 } : undefined;
+  return { chosen, wait: wv, state: open.length ? "non_pronta" : "pronta", lead: { id: L.id, name: L.name }, fallback, open, done, failed, dilemma };
 }
 
 /** Frase della regola di stop per una condizione che, se falsa, fa uscire la strada. */
@@ -968,26 +979,33 @@ export function voiOf(dec: Decision, key: string, share: number, wv?: WaitView):
 const voiRank = (v: VoiView) => (v.worth === "no" ? -1 : v.power / (v.c ? VC[v.c] : 2));
 
 /* ---------- Reversibilità ---------- */
-export function revOf(o: Opt): { irr: boolean; rev: boolean; text: string } | null {
+/** Due cose diverse: reversibilità operativa (posso tornare indietro?) e capitale a rischio (quanto perdo comunque se torno indietro: entrare + uscire). */
+export type RevInfo = { irr: boolean; rev: boolean; text: string; cap: number; capHigh: boolean; label: string };
+export function revOf(o: Opt, base: Resources = {}): RevInfo | null {
   const r = o.rev;
-  if (!r || (r.out == null && r.back == null && !r.lock)) return null;
+  if (!r || (r.in == null && r.out == null && r.back == null && !r.lock)) return null;
   const irr = r.lock === "alto" || (r.back ?? 0) >= 12;
-  const rev = r.lock === "basso" || ((r.back ?? 99) <= 3 && r.lock !== "alto");
-  const parts = [r.out ? `uscire costa ${eur(Math.abs(r.out))}` : "", r.back != null ? `per tornare indietro servono ${fmt(r.back)} mesi` : "", r.lock ? `lock-in ${r.lock}` : ""].filter(Boolean);
-  return { irr, rev: rev && !irr, text: parts.join(", ") };
+  const rev = !irr && (r.lock === "basso" || ((r.back ?? 99) <= 3 && r.lock !== "alto"));
+  const cap = Math.abs(r.in ?? 0) + Math.abs(r.out ?? 0);
+  // capitale «alto»: oltre un quarto dei risparmi di oggi, o oltre 10.000 € se non li hai indicati
+  const capHigh = cap > 0 && (base.cash0 ? cap >= Math.abs(base.cash0) * 0.25 : cap >= 10000);
+  const parts = [r.in ? `entrare costa ${eur(Math.abs(r.in))}` : "", r.out ? `uscire costa ${eur(Math.abs(r.out))}` : "", r.back != null ? `per tornare indietro servono ${fmt(r.back)} mesi` : "", r.lock ? `lock-in ${r.lock}` : ""].filter(Boolean);
+  const op = irr ? "Difficile da invertire" : rev ? "Operativamente reversibile" : "Reversibile in parte";
+  const label = cap ? `${op}, ma provarla espone ${eur(cap)} di capitale${capHigh ? " (alto rispetto ai tuoi risparmi)" : ""}` : op;
+  return { irr, rev, text: parts.join(", "), cap, capHigh, label };
 }
 /** Una strada in testa poco reversibile, con un'alternativa reversibile vicina nel punteggio: va detto. */
-export function revCheck(dec: Decision, r: DecResult): { t: string; how: string } | null {
+export function revCheck(dec: Decision, r: DecResult, base: Resources = {}): { t: string; how: string } | null {
   const ok = r.rows.filter((x) => !x.excluded.length);
   if (ok.length < 2) return null;
   const L = dec.model.options.find((o) => o.id === ok[0].id)!;
-  const lr = revOf(L);
+  const lr = revOf(L, base);
   if (!lr?.irr) return null;
   for (const row of ok.slice(1)) {
     const o = dec.model.options.find((x) => x.id === row.id)!;
-    const orv = revOf(o);
+    const orv = revOf(o, base);
     const gap = Math.round((ok[0].score - row.score) * 10) / 10;
-    if (orv?.rev && gap <= 5)
+    if (orv?.rev && !orv.capHigh && gap <= 5)
       return { t: `«${L.name}» supera «${o.name}» di soli ${fmt(gap)} punti ma è molto più difficile da invertire (${lr.text}); «${o.name}» invece è reversibile (${orv.text})`, how: `Chiediti se ${fmt(gap)} punti valgono il lock-in, oppure rendi «${L.name}» più reversibile (clausola di uscita, periodo di prova)` };
   }
   return null;

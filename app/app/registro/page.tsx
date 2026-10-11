@@ -71,7 +71,7 @@ function Inner() {
   const ws = useWs();
   const [cmp, setCmp] = useState<string | null>(null);
   const pre = ws.decisions.find((d) => d.id === q.get("d"));
-  const [f, setF] = useState({ decision_id: pre?.id ?? "", chosen: "", expected: "", review_at: "" });
+  const [f, setF] = useState({ decision_id: pre?.id ?? "", chosen: q.get("o") ?? "", expected: "", review_at: "" });
   const dec = ws.decisions.find((d) => d.id === f.decision_id);
   const top = useMemo(() => (dec ? analyzeDecision(dec).rows.find((r) => !r.excluded.length) : null), [dec]);
 
@@ -80,7 +80,10 @@ function Inner() {
     const r = analyzeDecision(dec);
     await ws.createSnapshot(`${dec.name} · decisione presa`, { decisions: [dec], deps: ws.deps, resources: ws.profile.resources, rules: ws.profile.rules, horizon: ws.profile.horizon }, { res: [r] });
     await ws.saveOutcome({ decision_id: dec.id, decision_name: dec.name, chosen: f.chosen, expected: f.expected || null, review_at: f.review_at || null });
-    await ws.saveDecision({ ...dec, status: "presa" });
+    // la strada scelta diventa uno stato vero della decisione (le altre tornano attive se erano «scelta»)
+    const now = new Date().toISOString();
+    const options = dec.model.options.map((o) => (o.name === f.chosen ? { ...o, st: "scelta" as const, stAt: now } : o.st === "scelta" ? { ...o, st: "attiva" as const, stAt: now } : o));
+    await ws.saveDecision({ ...dec, status: "presa", model: { ...dec.model, options } });
     setF({ decision_id: "", chosen: "", expected: "", review_at: "" });
   }
 

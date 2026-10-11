@@ -444,7 +444,10 @@ console.log("engine: 10/10 ok");
   sc.model.scartate = [{ kd: "cond", name: "Accettare proposta Ibiza, solo a condizioni", why: "già so che l'azienda non offre alloggio", at: "2026-10-11" }];
   assert.ok(E.falseDilemma(sc)!.sugg.every((x) => x.kd !== "cond"));
   sc.model.scartate.push({ kd: "prova", name: "Accettare proposta Ibiza in prova o in piccolo, con verifica e uscita", at: "2026-10-11" });
-  assert.equal(E.falseDilemma(sc), null);   // resta una sola proposta: le altre le hai considerate tu
+  // resta una proposta non considerata: l'avviso resta (finché c'è anche una sola strada plausibile non valutata)
+  assert.equal(E.falseDilemma(sc)!.sugg.length, 1);
+  sc.model.closed = { at: "2026-10-11" };   // dichiarazione esplicita: non esistono altre strade perseguibili
+  assert.equal(E.falseDilemma(sc), null);
   assert.ok(!E.readiness(sc, E.analyzeDecision(sc)).open.some((c) => c.kind === "dilemma"));
   console.log("engine: strade scartate come non perseguibili ok");
   // 43. spese scritte come positive (4.000 / 3.000 / 2.500): segnalate, anche nella decisione
@@ -543,4 +546,22 @@ console.log("engine: 10/10 ok");
     { s: [{ a: "Ibiza", l: [{ t: "Stipendio netto", k: "e", v: 2050, lo: 2000, hi: 2100, f: "D" }, { t: "Affitto", k: "s", v: 1500 }] }] }).model.options[0].conti!;
   assert.deepEqual([ad[0].v, ad[0].lo, ad[0].hi, ad[0].f, ad[1].v], [2050, 2000, 2100, "D", 1300]);
   console.log("ai: adatta la decisione senza toccare i tuoi numeri ok");
+  // 54. capitale a rischio: operativamente reversibile ma 40.000 € per provarla → va detto
+  const cp = E.revOf({ id: "x", name: "Compro attrezzatura", s: {}, rev: { in: 40000, out: 500, back: 1, lock: "basso" } }, { cash0: 60000 })!;
+  assert.ok(cp.rev && !cp.irr && cp.cap === 40500 && cp.capHigh && cp.label.startsWith("Operativamente reversibile, ma provarla espone"), cp.label);
+  assert.ok(!E.revOf({ id: "y", name: "y", s: {}, rev: { in: 300, back: 1, lock: "basso" } }, { cash0: 60000 })!.capHigh);
+  const cpD: Decision = { id: "cp", name: "cp", status: "aperta", imp: 1, model: { criteria: [{ id: "p", name: "P", w: 0, imp: 3, kind: "g" }], constraints: [],
+    options: [{ id: "a", name: "Compro attrezzatura", s: { p: 100 }, m: { p: { rel: "F" } }, rev: { in: 40000, out: 500, back: 1, lock: "basso" } },
+      { id: "b", name: "Noleggio", kd: "prova", s: { p: 50 }, m: { p: { rel: "F" } } }, { id: "c", name: "Compro solo se finanziato", kd: "cond", s: { p: 25 }, m: { p: { rel: "F" } } }, { id: "d", name: "Cerco usato", kd: "cerca", s: { p: 25 }, m: { p: { rel: "F" } } }] } };
+  assert.ok(E.readiness(cpD, E.analyzeDecision(cpD), { cash0: 60000 }).open.some((c) => c.key === "cap" && c.t.includes("40.500")));
+  // 55. «Da verificare» blocca «Pronta»; «Scelta» è riportata
+  const vD = structuredClone(cpD); delete vD.model.options[0].rev;
+  assert.equal(E.readiness(vD, E.analyzeDecision(vD)).state, "pronta");
+  vD.model.options[0].st = "verifica";
+  const vR = E.readiness(vD, E.analyzeDecision(vD));
+  assert.ok(vR.state === "non_pronta" && vR.open.some((c) => c.key === "ver"));
+  vD.model.options[0].st = "scelta";
+  const sR = E.readiness(vD, E.analyzeDecision(vD));
+  assert.ok(sR.chosen && sR.chosen.name === "Compro attrezzatura" && sR.chosen.wasLead && sR.state === "pronta");
+  console.log("engine: capitale a rischio, stati verifica/scelta, chiusura delle strade ok");
 }

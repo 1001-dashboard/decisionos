@@ -134,6 +134,7 @@ export default function Report() {
             <div>
               <h3>Cosa stai decidendo</h3>
               <ul>{m.options.map((o) => <li key={o.id}><b>{o.name}</b>{o.note ? ` — ${o.note}` : ""}</li>)}</ul>
+              {m.closed && <p className="rep-callout">Il {new Date(m.closed.at).toLocaleDateString("it-IT")} hai dichiarato che non esistono altre strade realisticamente perseguibili.</p>}
               {((m.scartate ?? []).length > 0 || m.options.some(isOut)) && <><h3>Strade considerate e scartate</h3><ul>
                 {m.options.filter(isOut).map((x) => <li key={x.id}>{x.name} ({OPT_ST[x.st!].toLowerCase()}{x.stAt ? `, ${new Date(x.stAt).toLocaleDateString("it-IT")}` : ""}){x.stWhy ? ` — ${x.stWhy}` : " — senza motivo indicato"}</li>)}
                 {(m.scartate ?? []).map((x, k) => <li key={k}>{x.name}{x.why ? ` — ${x.why}` : " — senza motivo indicato"}</li>)}</ul></>}

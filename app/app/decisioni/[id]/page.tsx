@@ -73,7 +73,7 @@ function PcList({ items, kind, onChange }: { items: string[]; kind: "pro" | "con
 }
 
 /** Strade mancanti: falso dilemma con proposte da aggiungere. */
-function Dilemma({ d, add, drop }: { d: DilemmaT; add: (kd: PlanKind, name: string) => void; drop: (kd: PlanKind, name: string, why: string) => void }) {
+function Dilemma({ d, add, drop, close }: { d: DilemmaT; add: (kd: PlanKind, name: string) => void; drop: (kd: PlanKind, name: string, why: string) => void; close: () => void }) {
   const [open, setOpen] = useState<PlanKind | null>(null);
   const [why, setWhy] = useState("");
   return (
@@ -99,6 +99,7 @@ function Dilemma({ d, add, drop }: { d: DilemmaT; add: (kd: PlanKind, name: stri
           </div>
         ))}
       </div>
+      <button className="btn ghost sm" style={{ alignSelf: "flex-start" }} onClick={() => confirm("Confermi che non esistono altre strade realisticamente perseguibili? Lo trovi scritto nel report.") && close()}>Non esistono altre strade realisticamente perseguibili</button>
     </div>
   );
 }
@@ -214,7 +215,7 @@ function Conseq({ o, i, setM, onNewDecision, base, rules, phs, ars }: { o: Opt; 
             <span className="seg sm" role="group" aria-label={`Lock-in ${o.name}`}>{(["basso", "medio", "alto"] as const).map((v) => <button key={v} className={o.rev?.lock === v ? "on" : ""} onClick={() => edit((x) => { x.rev = { ...x.rev, lock: x.rev?.lock === v ? undefined : v }; })}>{v[0].toUpperCase() + v.slice(1)}</button>)}</span></span>
           <span><small>Scade il (offerta, bando…)</small><input type="date" aria-label={`Scadenza ${o.name}`} value={o.exp ?? ""} onChange={(e) => edit((x) => { x.exp = e.target.value || null; })} style={{ width: 160 }} /></span>
         </div>
-        {(() => { const r = revOf(o); return r ? <small className={r.irr ? "err" : r.rev ? "ok-t" : "muted"}>{r.irr ? "Difficile da invertire" : r.rev ? "Reversibile" : "Reversibile in parte"}: {r.text}.</small> : <small className="muted">Una strada un po&apos; peggiore ma reversibile può essere più razionale di una migliore ma irreversibile.</small>; })()}
+        {(() => { const r = revOf(o, base); return r ? <small className={r.irr || r.capHigh ? "err" : r.rev ? "ok-t" : "muted"}>{r.label}. {r.text}.</small> : <small className="muted">Una strada un po&apos; peggiore ma reversibile può essere più razionale di una migliore ma irreversibile. Il costo per entrare è capitale a rischio: lo perdi anche se torni indietro.</small>; })()}
       </div>
     </div>
   );
@@ -470,6 +471,7 @@ export default function DecisionPage() {
       setAdattaMsg(`Adattata: ${a.v - b.v} importi, ${a.c - b.c} condizioni, ${a.r - b.r} rischi, ${a.t - b.t} conseguenze in più. Controlla le voci marcate AI.`);
     } catch (e) { setAiErr((e as Error).message); } finally { setAiBusy(false); }
   }
+  const closePaths = () => setM((mm) => { mm.closed = { at: new Date().toISOString() }; });
   function dropPlan(kd: PlanKind, name: string, why: string) {
     setM((mm) => { mm.options.push({ id: uid(), name, kd, s: {}, st: "np", stAt: new Date().toISOString(), ...(why.trim() ? { stWhy: why.trim() } : {}) }); });
   }
@@ -597,7 +599,8 @@ export default function DecisionPage() {
               <button className="btn sm" disabled={aiBusy} onClick={() => { setMore(true); runPremessa(false); window.scrollTo({ top: 0 }); }}><Sparkles size={14} /> Aggiorna la premessa</button>
             </div>
           )}
-          {dilemma && <Dilemma d={dilemma} add={addPlan} drop={dropPlan} />}
+          {dilemma && <Dilemma d={dilemma} add={addPlan} drop={dropPlan} close={closePaths} />}
+          {m.closed && <div className="note row between" style={{ fontSize: 14 }}><span>Hai dichiarato il {new Date(m.closed.at).toLocaleDateString("it-IT")} che non esistono altre strade realisticamente perseguibili.</span><button className="btn ghost sm" onClick={() => setM((mm) => { delete mm.closed; })}>Riapri</button></div>}
           {((m.scartate ?? []).length > 0 || m.options.some(isOut)) && (
             <div className="note" style={{ fontSize: 14 }}>
               <b>Strade considerate e scartate:</b>
@@ -623,8 +626,13 @@ export default function DecisionPage() {
                 </div>
                 <input value={o.name} placeholder="Nome dell'alternativa" onChange={(e) => setM((mm) => { opt(mm, o.id).name = e.target.value; })} style={{ fontWeight: 600 }} />
                 <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                  <select aria-label="Stato della strada" className="stsel" value={o.st ?? "attiva"} onChange={(e) => setM((mm) => { const x = opt(mm, o.id); x.st = e.target.value as OptState; x.stAt = new Date().toISOString(); if (!isOut(x)) delete x.stWhy; })}>
-                    {(Object.keys(OPT_ST) as OptState[]).map((k) => <option key={k} value={k}>{OPT_ST[k]}</option>)}
+                  <select aria-label="Stato della strada" className="stsel" value={o.st ?? "attiva"} onChange={(e) => {
+                    const v = e.target.value as OptState;
+                    // «Scelta» non è un'etichetta: si registra nel Registro (con cosa ti aspetti e quando verificarlo)
+                    if (v === "scelta") { router.push(`/app/registro?d=${d.id}&o=${encodeURIComponent(o.name)}`); return; }
+                    setM((mm) => { const x = opt(mm, o.id); x.st = v; x.stAt = new Date().toISOString(); if (!isOut(x)) delete x.stWhy; });
+                  }}>
+                    {(Object.keys(OPT_ST) as OptState[]).map((k) => <option key={k} value={k}>{k === "scelta" && o.st !== "scelta" ? "Scelta… (registra)" : OPT_ST[k]}</option>)}
                   </select>
                   {res.rows.find((r) => r.id === o.id)?.excluded.some((w) => !/^(non perseguibile|abbandonata)/.test(w)) && <span className="pill bad" title={res.rows.find((r) => r.id === o.id)!.excluded.join("; ")}>esclusa da vincoli</span>}
                   {o.stAt && o.st && o.st !== "attiva" && <small className="muted">dal {new Date(o.stAt).toLocaleDateString("it-IT")}</small>}
@@ -972,9 +980,10 @@ export default function DecisionPage() {
       {/* ---------- 5. RISULTATO ---------- */}
       {S === 5 && (
         <section className="stack">
-          {dilemma && <Dilemma d={dilemma} add={(kd, n) => { addPlan(kd, n); setStep(1); window.scrollTo({ top: 0 }); }} drop={dropPlan} />}
+          {dilemma && <Dilemma d={dilemma} add={(kd, n) => { addPlan(kd, n); setStep(1); window.scrollTo({ top: 0 }); }} drop={dropPlan} close={closePaths} />}
           <div className={`card stack ready ${ready.state}`}>
             <div className="rk">Decisione</div>
+            {ready.chosen && <div className="note ok" style={{ fontSize: 14 }}>Hai scelto <b>{ready.chosen.name}</b> e l&apos;hai registrata nel Registro.{!ready.chosen.wasLead ? " Non è la strada in testa nell'analisi: annota nel Registro perché, ti servirà per la retrospettiva." : ready.chosen.open > 0 ? ` Restavano ${ready.chosen.open} verifiche aperte: tienile d'occhio.` : ""}</div>}
             <h2 style={{ margin: 0 }}>{ready.state === "pronta" ? "Pronta" : ready.state === "non_pronta" ? "Non ancora pronta" : ready.state === "nessuna" ? "Nessuna strada regge" : "Da impostare"}</h2>
             {ready.state === "non_pronta" && ready.lead && (
               <>
@@ -1081,7 +1090,7 @@ export default function DecisionPage() {
                       <td>{x.worst ? <>{x.worst.t}{x.worst.tot ? <> · <b>{eur(x.worst.tot)}</b></> : null}</> : "—"}</td>
                       <td>{x.n ? eur(x.pesato) : "—"}</td>
                       <td>{x.rompe ? <span className="pill bad">{x.rompe}</span> : x.n ? <span className="pill ok">no</span> : "—"}</td>
-                      <td>{(() => { const rv = revOf(m.options.find((o) => o.id === x.id)!); return rv ? <span className={`pill ${rv.irr ? "bad" : rv.rev ? "ok" : "warn"}`} title={rv.text}>{rv.irr ? "difficile" : rv.rev ? "facile" : "in parte"}</span> : <span className="muted">—</span>; })()}</td>
+                      <td>{(() => { const rv = revOf(m.options.find((o) => o.id === x.id)!, R); return rv ? <><span className={`pill ${rv.irr ? "bad" : rv.rev ? "ok" : "warn"}`} title={rv.text}>{rv.irr ? "difficile" : rv.rev ? "facile" : "in parte"}</span>{rv.cap ? <small className={rv.capHigh ? "err" : "muted"} style={{ display: "block" }}>{eur(rv.cap)} a rischio</small> : null}</> : <span className="muted">—</span>; })()}</td>
                     </tr>
                   ))}</tbody>
                 </table>

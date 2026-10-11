@@ -146,9 +146,10 @@ export function briefing(dec: Decision, r: DecResult, o: Opt, base: Resources = 
   for (const x of (o.con ?? []).slice(0, 2)) if (!watch.some((w) => w.includes(x))) watch.push(`${x}.`);
   // a favore
   for (const x of (o.pro ?? []).slice(0, 3)) plus.push(`${x}.`);
-  const rvo = revOf(o);
-  if (rvo?.irr) watch.push(`Difficile tornare indietro: ${rvo.text}.`);
-  else if (rvo?.rev) plus.push(`Reversibile: ${rvo.text}.`);
+  const rvo = revOf(o, base);
+  if (rvo?.irr || rvo?.capHigh) watch.push(`${rvo.label}: ${rvo.text}.`);
+  else if (rvo?.rev) plus.push(`${rvo.label}: ${rvo.text}.`);
+  if (o.st === "verifica") watch.push("Strada ancora da verificare: non è validata.");
   if (o.exp) { const dd = daysTo(o.exp); if (dd >= 0) watch.push(`Scade tra ${dd} ${dd === 1 ? "giorno" : "giorni"} (${new Date(o.exp).toLocaleDateString("it-IT")}).`); }
   const cm = (o.impacts ?? []).find((i) => i.r === "cash_m");
   if (cm) {
