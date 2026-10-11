@@ -77,7 +77,7 @@ export type Assumption = { id: string; t: string; rel: Rel; aff?: "alta" | "medi
 export type AiNote = { p: string[]; c?: string; at: string; h: string };
 export type Model = {
   criteria: Crit[]; constraints: Constraint[]; options: Opt[]; assumptions?: Assumption[];
-  ai?: { contro?: AiNote; strade?: { at: string; h: string; x?: string } };
+  ai?: { contro?: AiNote; strade?: { at: string; h: string; x?: string }; premPrev?: string };
   phases?: Horizon[];   // orizzonti di questa decisione (se assenti: preset per tipo)
   /** strade proposte e scartate da te come non perseguibili, con il motivo: contano come «considerate» */
   scartate?: { kd: PlanKind; name: string; why?: string; at: string }[];

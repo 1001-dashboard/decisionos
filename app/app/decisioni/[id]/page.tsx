@@ -17,7 +17,7 @@ import {
 import { CRIT_LIB } from "@/lib/templates";
 import { briefing } from "@/lib/narrative";
 import { impFor, priGap } from "@/lib/priorities";
-import { ai, compact, mergeStrade, contiFromAi, contiPayload, type AiStrade, type AiConti } from "@/lib/ai";
+import { ai, compact, mergeStrade, contiFromAi, contiPayload, premessaPayload, type AiStrade, type AiConti, type AiPremessa } from "@/lib/ai";
 
 const LVC = ["#c94040", "#e07b39", "#d9a521", "#7bb661", "#23906a"];
 const SRC: { k: Rel; l: string }[] = [{ k: "F", l: "Certo" }, { k: "D", l: "Me l'hanno detto" }, { k: "S", l: "Stima mia" }];
@@ -290,6 +290,8 @@ export default function DecisionPage() {
   const [cq, setCq] = useState<string[]>([]);
   const [cans, setCans] = useState<string[]>([]);
   const [ceco, setCeco] = useState<boolean | null>(null);
+  const [prem, setPrem] = useState<{ p: string; f: string[]; q: string[] } | null>(null);
+  const [pans, setPans] = useState<string[]>([]);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiErr, setAiErr] = useState("");
   const others = useMemo(() => ws.decisions.filter((x) => x.status === "aperta" && x.id !== id && x.model.options.length), [ws.decisions, id]);
@@ -419,6 +421,20 @@ export default function DecisionPage() {
       upd({ ...d!, model: r.model }); setCq(r.questions); setCans([]);
     } catch (e) { setAiErr((e as Error).message); } finally { setAiBusy(false); }
   }
+  const setD2 = (fn: (dd: Decision) => Decision) => upd(fn(d!));
+  async function runPremessa(withAns: boolean) {
+    setAiBusy(true); setAiErr("");
+    try {
+      const ansT = withAns && prem ? prem.q.map((q, i) => (pans[i]?.trim() ? `${q} ${pans[i].trim()}` : "")).filter(Boolean) : [];
+      const x = await ai<AiPremessa>("premessa", premessaPayload(d!, eco, ansT));
+      const p = typeof x.p === "string" ? x.p.trim() : "";
+      if (!p) { setAiErr("L'Analista non ha prodotto una premessa: riprova."); return; }
+      const arr = (v: unknown) => (Array.isArray(v) ? v.filter((t): t is string => typeof t === "string" && !!t.trim()) : []);
+      setPrem({ p, f: arr(x.f).slice(0, 8), q: arr(x.q).slice(0, 4) }); setPans([]);
+      // le risposte date diventano parte della decisione: restano come dubbi chiariti
+      if (ansT.length) setM((mm) => { mm.assumptions = [...(mm.assumptions ?? []), ...ansT.map((t) => ({ id: uid(), t, rel: "D" as const }))]; });
+    } catch (e) { setAiErr((e as Error).message); } finally { setAiBusy(false); }
+  }
   function dropPlan(kd: PlanKind, name: string, why: string) {
     setM((mm) => { mm.scartate = [...(mm.scartate ?? []).filter((x) => x.kd !== kd), { kd, name, ...(why.trim() ? { why: why.trim() } : {}), at: new Date().toISOString() }]; });
   }
@@ -489,7 +505,32 @@ export default function DecisionPage() {
           <div><label className="f">Stato</label><select value={d.status} onChange={(e) => upd({ ...d, status: e.target.value as Decision["status"] })}><option value="aperta">Aperta</option><option value="presa">Presa</option><option value="archiviata">Archiviata</option></select></div>
           <div><label className="f">Da decidere entro</label><input type="date" value={d.due ?? ""} onChange={(e) => upd({ ...d, due: e.target.value || null })} /></div>
           <div><label className="f">Peso rispetto alle altre decisioni</label><select value={d.imp} onChange={(e) => upd({ ...d, imp: +e.target.value })}><option value={1}>Normale</option><option value={2}>Alta</option><option value={3}>Molto alta</option></select></div>
-          <div style={{ gridColumn: "1/-1" }}><label className="f">La situazione in breve</label><textarea style={{ minHeight: 70 }} value={d.descr ?? ""} onChange={(e) => upd({ ...d, descr: e.target.value })} /></div>
+          <div style={{ gridColumn: "1/-1" }}><label className="f">La situazione in breve (premessa)</label><textarea style={{ minHeight: 90 }} value={d.descr ?? ""} onChange={(e) => upd({ ...d, descr: e.target.value })} />
+            <div className="row" style={{ gap: 8, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <button className="btn sm" disabled={aiBusy} onClick={() => runPremessa(false)}><Sparkles size={14} /> {aiBusy ? "L'Analista sta leggendo…" : "Riscrivi con i dati emersi"}</button>
+              <label className="row" style={{ gap: 6, fontSize: 13 }}><input type="checkbox" checked={eco} onChange={(e) => setCeco(e.target.checked)} /> includi le cifre</label>
+              {aiErr && more && <span className="err">{aiErr}</span>}
+              {m.ai?.premPrev != null && <button className="btn ghost sm" onClick={() => setD2((dd) => ({ ...dd, descr: dd.model.ai?.premPrev ?? dd.descr, model: { ...dd.model, ai: { ...dd.model.ai, premPrev: undefined } } }))}>Torna alla versione precedente</button>}
+            </div>
+            {prem && (
+              <div className="card stack prembox">
+                <b>Premessa proposta</b>
+                <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{prem.p}</p>
+                {prem.f.length > 0 && <div><small className="muted">Fatti emersi</small><ul className="clean">{prem.f.map((x) => <li key={x}>{x}</li>)}</ul></div>}
+                <div className="row" style={{ gap: 6 }}>
+                  <button className="btn sm pri" onClick={() => { setD2((dd) => ({ ...dd, descr: prem.p, model: { ...dd.model, ai: { ...dd.model.ai, premPrev: dd.descr ?? "" } } })); setPrem(null); }}>Usa questa premessa</button>
+                  <button className="btn ghost sm" onClick={() => setPrem(null)}>Scarta</button>
+                </div>
+                {prem.q.length > 0 && (
+                  <div className="stack qbox" style={{ gap: 6 }}>
+                    <strong className="row" style={{ gap: 6 }}><HelpCircle size={15} /> Per una premessa completa mi manca</strong>
+                    {prem.q.map((q, i) => <div key={q}><label className="f">{q}</label><input value={pans[i] ?? ""} onChange={(e) => { const a = [...pans]; a[i] = e.target.value; setPans(a); }} /></div>)}
+                    <button className="btn sm" disabled={aiBusy || !pans.some((a) => a?.trim())} onClick={() => runPremessa(true)}><RefreshCw size={14} /> Riscrivi con le risposte</button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -513,6 +554,12 @@ export default function DecisionPage() {
         <section className="stack">
           <h2 className="sh">Quali strade hai davanti?</h2>
           <Hint>Le scelte vere quasi mai sono «sì o no». Oltre alla strada diretta pensa a una strada <b>condizionata</b> (solo se…), <b>sperimentale</b> (in prova, in piccolo, un pilota), <b>temporanea</b>, <b>rinviata</b> (quando avrai più informazioni) o a un&apos;<b>alternativa</b> da cercare. Negoziare non è una strada a parte: è il primo passo del piano, lo trovi alla fine.</Hint>
+          {m.ai?.premPrev == null && ((m.oggi ?? []).some((l) => l.v != null) || (m.scartate ?? []).length > 0 || m.options.some((o) => (o.cond ?? []).some((c) => c.st !== "?"))) && (
+            <div className="note row between" style={{ fontSize: 14 }}>
+              <span>Dal primo racconto sono emersi nuovi dati (conti, condizioni verificate, strade scartate): la premessa può essere aggiornata.</span>
+              <button className="btn sm" disabled={aiBusy} onClick={() => { setMore(true); runPremessa(false); window.scrollTo({ top: 0 }); }}><Sparkles size={14} /> Aggiorna la premessa</button>
+            </div>
+          )}
           {dilemma && <Dilemma d={dilemma} add={addPlan} drop={dropPlan} />}
           {(m.scartate ?? []).length > 0 && (
             <div className="note" style={{ fontSize: 14 }}>

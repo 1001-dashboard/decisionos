@@ -231,3 +231,30 @@ export function contiPayload(d: Decision, eco: boolean, answers: string[] = []) 
     ...(eco ? { eco: true } : { privacy: "importi oscurati: proponi solo le voci, v null" }),
   };
 }
+
+/* ---------- Premessa aggiornata con i dati emersi ---------- */
+export type AiPremessa = { p?: string; f?: string[]; q?: string[] };
+/** Tutto ciò che è emerso nella decisione, in forma compatta: racconto, strade (tipo, condizioni con stato, rischi, decisioni generate), conti, scartate, dubbi. */
+export function premessaPayload(d: Decision, eco: boolean, answers: string[] = []) {
+  const tx = (t?: string) => (t == null ? undefined : eco ? t : redactMoney(t));
+  const ln = (l: Line) => `${l.t}${eco && l.v != null ? ` ${l.k === "e" ? "+" : "-"}${l.v}${l.u ? " una tantum" : "/mese"}` : ` (${l.k === "e" ? "entrata" : "spesa"})`}${l.f === "S" ? " [stima]" : l.f === "F" ? " [verificato]" : ""}`;
+  const m = d.model;
+  const ST: Record<string, string> = { "?": "da verificare", si: "vero", no: "falso" };
+  return {
+    t: tx(d.descr), ...(m.tipo ? { k: m.tipo } : {}),
+    o: m.options.map((o) => ({
+      n: tx(o.name), ...(o.kd && o.kd !== "base" ? { kd: o.kd } : {}),
+      ...(o.cond?.length ? { cd: o.cond.map((c) => `${tx(c.t)} [${ST[c.st]}]`) } : {}),
+      ...(o.risks?.length ? { rk: o.risks.map((r) => `${tx(r.t)} [${r.p}]`) } : {}),
+      ...(o.next?.length ? { nx: o.next.map(tx) } : {}),
+      ...(o.conti?.length ? { ct: o.conti.filter((l) => !l.from || m.oggi?.find((x) => x.id === l.from)?.v !== l.v).map(ln) } : {}),
+      ...((o.pro?.length || o.con?.length) ? { pc: [(o.pro ?? []).map(tx), (o.con ?? []).map(tx)] } : {}),
+    })),
+    ...(m.oggi?.length ? { oggi: m.oggi.map(ln) } : {}),
+    ...(m.scartate?.length ? { no: m.scartate.map((x) => `${tx(x.name)}${x.why ? ": " + tx(x.why) : ""}`) } : {}),
+    ...(m.assumptions?.length ? { i: m.assumptions.map((a) => `${tx(a.t)} [${a.rel}]`) } : {}),
+    ...(m.nota ? { x: tx(m.nota) } : {}),
+    ...(answers.length ? { r: answers.map(tx) } : {}),
+    ...(eco ? { eco: true } : { privacy: "importi oscurati: non citare cifre" }),
+  };
+}

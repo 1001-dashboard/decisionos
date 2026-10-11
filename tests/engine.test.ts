@@ -491,4 +491,12 @@ console.log("engine: 10/10 ok");
     options: [{ ...ib, s: { p: 100 }, m: { p: { rel: "F" } }, kd: "cond" }, { id: "b", name: "B", s: { p: 25 }, m: { p: { rel: "F" } }, kd: "prova" }, { id: "c", name: "C", s: { p: 25 }, m: { p: { rel: "F" } }, kd: "cerca" }] } };
   assert.ok(E.readiness(dR, E.analyzeDecision(dR)).open.some((c) => c.key === "conti" && c.t.includes("stime")));
   console.log("engine: conti di oggi e per strada ok");
+  // 47. premessa: legge tutto ciò che è emerso; senza consenso niente cifre
+  const pd: Decision = { ...dC, model: { ...cr.model, scartate: [{ kd: "cond", name: "Ibiza a condizioni", why: "niente alloggio", at: "x" }],
+    options: cr.model.options.map((o, i) => (i === 0 ? { ...o, cond: [{ id: "c", t: "Netto confermato", st: "si" as const }], risks: [{ id: "r", t: "Contratto stagionale", p: "alta" as const }] } : o)) } };
+  const pp = JSON.stringify(AI.premessaPayload(pd, false, ["Quanto netto? 2.400 €"]));
+  assert.ok(pp.includes("Netto confermato [vero]") && pp.includes("Contratto stagionale [alta]") && pp.includes("niente alloggio") && pp.includes("Stipendio netto Ibiza") && pp.includes("NASpI"), pp);
+  assert.ok(!/\d{3}/.test(pp.replace(/"k":"[a-z]+"/g, "")), pp);
+  assert.ok(JSON.stringify(AI.premessaPayload(pd, true)).includes("2400"));
+  console.log("ai: premessa dai dati emersi ok");
 }

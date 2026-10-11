@@ -447,3 +447,4 @@ details.deep > summary { cursor: pointer; font-weight: 600; color: var(--navy); 
 @media (max-width: 860px) { .contigrid { grid-template-columns: 1fr; } .lrow { grid-template-columns: minmax(0, 1fr) auto; } .lrow .numin { grid-column: 1 / -1; } }
 .rep-conti { background: var(--bg); border-radius: 10px; padding: 10px 14px; margin-bottom: 10px; font-size: 13px; }
 .rep-conti h3 { margin: 0 0 6px; font-size: 14px; }
+.prembox { margin-top: 8px; background: #f6f4ff; border: 1px solid #e3ddfb; }

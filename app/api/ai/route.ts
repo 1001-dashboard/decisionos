@@ -48,6 +48,13 @@ Regole: le alternative sono PIANI, non sì/no. Strategie kd: base diretta, cond 
 "a":[{"n":"strada","kd":"base|cond|prova|temp|rinvio|cerca|sq","p":["pro concreti, max 3, brevi"],"m":["contro concreti, max 3, brevi"],"tl":[{"h":uno degli orizzonti ph,"a":"una delle aree ar","t":"cosa succede concretamente"}],"nx":["decisione che questa strada costringe a prendere dopo"],"cd":[{"t":"condizione verificabile perché la strada abbia senso, con soglia se il racconto la dà","h":"azione concreta per verificarla","g":true se senza di essa la strada non ha senso}],"rk":[{"t":"rischio concreto","p":"bassa|media|alta","c":perdita una tantum €,"m":perdita €/mese,"d":mesi,"x":"come ridurlo"}]}]}
 Regole: ripeti le strade esistenti con lo stesso nome n per completarne tl, nx, cd; aggiungi max 3 strade nuove, mai quelle in no (scartate dall'utente, con il motivo) né loro varianti. Negoziare non è una strada: va nelle azioni h. tl sulla vita reale, non solo soldi. rk: 1-3 rischi reali per strada con come ridurli. Non inventare cifre: soglie e importi solo se presenti nei dati.`,
   },
+  premessa: {
+    max: 1100,
+    s: `Riscrivi la premessa di una decisione usando SOLO ciò che è emerso nei dati (racconto t, strade o con condizioni cd, rischi rk, conti oggi e ct, strade scartate no, dubbi i, risposte r). Non aggiungere fatti, costi o persone che non compaiono. Distingui ciò che l'utente ha detto da ciò che è stima o da verificare. Non dire cosa scegliere. JSON:
+{"p":"premessa in 5-9 frasi, in seconda persona: la situazione di oggi, cosa è in gioco, le strade considerate e scartate (con il motivo), i vincoli e le condizioni già verificate o cadute, cosa resta da chiarire",
+"f":["fatti emersi e dichiarati, brevi, max 8"],
+"q":["max 4 domande su ciò che manca davvero per decidere, mai su cose già presenti"]}`,
+  },
   conti: {
     max: 1600,
     s: `Imposta i conti di una decisione: il bilancio mensile di OGGI e cosa cambia con ogni strada a. Prima di tutto indaga: se mancano numeri necessari (entrate di oggi, costo della casa oggi, spese fisse, entrate e costi con ogni strada) chiedili in q. NON inventare voci o costi che l'utente non ha detto: es. se la casa è di proprietà non c'è affitto; se la famiglia resta a casa non esiste una seconda casa da pagare finché l'utente non lo dice. JSON:
