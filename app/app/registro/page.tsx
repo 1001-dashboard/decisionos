@@ -71,7 +71,7 @@ function Inner() {
   const ws = useWs();
   const [cmp, setCmp] = useState<string | null>(null);
   const pre = ws.decisions.find((d) => d.id === q.get("d"));
-  const [f, setF] = useState({ decision_id: pre?.id ?? "", chosen: q.get("o") ?? "", expected: "", review_at: "" });
+  const [f, setF] = useState({ decision_id: pre?.id ?? "", chosen: q.get("o") ?? "", expected: "", review_at: "" });   // chosen = id della strada
   const dec = ws.decisions.find((d) => d.id === f.decision_id);
   const top = useMemo(() => (dec ? analyzeDecision(dec).rows.find((r) => !r.excluded.length) : null), [dec]);
 
@@ -79,10 +79,12 @@ function Inner() {
     if (!dec || !f.chosen) return;
     const r = analyzeDecision(dec);
     await ws.createSnapshot(`${dec.name} · decisione presa`, { decisions: [dec], deps: ws.deps, resources: ws.profile.resources, rules: ws.profile.rules, horizon: ws.profile.horizon }, { res: [r] });
-    await ws.saveOutcome({ decision_id: dec.id, decision_name: dec.name, chosen: f.chosen, expected: f.expected || null, review_at: f.review_at || null });
+    const ch = dec.model.options.find((o) => o.id === f.chosen && !isOut(o));
+    if (!ch) return;
+    await ws.saveOutcome({ decision_id: dec.id, decision_name: dec.name, chosen: ch.name, chosen_id: ch.id, expected: f.expected || null, review_at: f.review_at || null });
     // la strada scelta diventa uno stato vero della decisione (le altre tornano attive se erano «scelta»)
     const now = new Date().toISOString();
-    const options = dec.model.options.map((o) => (o.name === f.chosen ? { ...o, st: "scelta" as const, stAt: now } : o.st === "scelta" ? { ...o, st: "attiva" as const, stAt: now } : o));
+    const options = dec.model.options.map((o) => (o.id === ch.id ? { ...o, st: "scelta" as const, stAt: now } : o.st === "scelta" ? { ...o, st: "attiva" as const, stAt: now } : o));
     await ws.saveDecision({ ...dec, status: "presa", model: { ...dec.model, options } });
     setF({ decision_id: "", chosen: "", expected: "", review_at: "" });
   }
@@ -102,10 +104,10 @@ function Inner() {
               <>
                 <select value={f.chosen} onChange={(e) => setF({ ...f, chosen: e.target.value })}>
                   <option value="">Alternativa scelta…</option>
-                  {dec.model.options.filter((o) => !isOut(o)).map((o) => <option key={o.id} value={o.name}>{o.name}{o.id === top?.id ? " (prima nel modello)" : ""}</option>)}
+                  {dec.model.options.filter((o) => !isOut(o)).map((o) => <option key={o.id} value={o.id}>{o.name}{o.id === top?.id ? " (prima nel modello)" : ""}</option>)}
                 </select>
                 {dec.model.options.some(isOut) && <small className="muted">Le strade non perseguibili o abbandonate non sono selezionabili: per sceglierne una, prima riattivala nella decisione.</small>}
-                {f.chosen && top && f.chosen !== top.name && <div className="note warn">Hai scelto un&apos;alternativa diversa dalla prima del modello. Annota nel previsto il motivo: in revisione capirai se il modello sbagliava o mancava un criterio.</div>}
+                {f.chosen && top && f.chosen !== top.id && <div className="note warn">Hai scelto un&apos;alternativa diversa dalla prima del modello. Annota nel previsto il motivo: in revisione capirai se il modello sbagliava o mancava un criterio.</div>}
                 <textarea placeholder="Cosa ti aspetti che succeda (cifre, tempi)" value={f.expected} onChange={(e) => setF({ ...f, expected: e.target.value })} />
                 <div><label className="f">Data di revisione</label><input type="date" value={f.review_at} onChange={(e) => setF({ ...f, review_at: e.target.value })} /></div>
                 <button className="btn pri" disabled={!f.chosen} onClick={register}>Registra e congela l&apos;analisi</button>

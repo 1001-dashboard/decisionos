@@ -51,6 +51,7 @@ create table if not exists public.outcomes (
   decision_id uuid references public.decisions on delete set null,
   decision_name text not null,
   chosen text not null,
+  chosen_id text,
   decided_at date not null default current_date,
   expected text,
   review_at date,
@@ -97,3 +98,6 @@ create table if not exists public.ai_usage (
 alter table public.ai_usage enable row level security;
 drop policy if exists own on public.ai_usage;
 create policy own on public.ai_usage for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- v2.8: identità della strada scelta (l'id, non il nome). Idempotente: si può rilanciare.
+alter table public.outcomes add column if not exists chosen_id text;

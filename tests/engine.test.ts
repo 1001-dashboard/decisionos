@@ -446,7 +446,7 @@ console.log("engine: 10/10 ok");
   sc.model.scartate.push({ kd: "prova", name: "Accettare proposta Ibiza in prova o in piccolo, con verifica e uscita", at: "2026-10-11" });
   // resta una proposta non considerata: l'avviso resta (finché c'è anche una sola strada plausibile non valutata)
   assert.equal(E.falseDilemma(sc)!.sugg.length, 1);
-  sc.model.closed = { at: "2026-10-11" };   // dichiarazione esplicita: non esistono altre strade perseguibili
+  sc.model.closed = { at: "2026-10-11", hash: E.closedHash(sc) };   // dichiarazione esplicita: non esistono altre strade perseguibili
   assert.equal(E.falseDilemma(sc), null);
   assert.ok(!E.readiness(sc, E.analyzeDecision(sc)).open.some((c) => c.kind === "dilemma"));
   console.log("engine: strade scartate come non perseguibili ok");
@@ -575,7 +575,20 @@ console.log("engine: 10/10 ok");
   assert.equal(E.falseDilemma(cl), null);   // tornato al contesto di allora: la dichiarazione vale di nuovo
   cl.descr = "Offerta di lavoro, e ora c'è anche un'offerta a Milano";
   assert.ok(E.falseDilemma(cl)?.stale);
-  // vecchie dichiarazioni senza impronta restano valide (compatibilità)
-  delete cl.model.closed.hash; assert.equal(E.falseDilemma(cl), null);
+  // vecchie dichiarazioni senza impronta: non verificabili, vanno riconfermate
+  delete cl.model.closed.hash; assert.ok(E.falseDilemma(cl)?.stale);
+  // 57. l'AI si aggancia alle strade per codice (A, B…), non per nome; nomi doppi distinti
+  const ff = [{ id: "1", name: "Offerta" }, { id: "2", name: "Offerta" }, { id: "3", name: "Resto" }];
+  assert.equal(AI.findOpt(ff, "B")!.id, "2"); assert.equal(AI.findOpt(ff, "B) Offerta")!.id, "2"); assert.equal(AI.findOpt(ff, "resto")!.id, "3");
+  const dn = AI.structToModel({ a: [{ n: "Offerta" }, { n: "offerta" }] } as never).model.options.map((o) => o.name);
+  assert.deepEqual(dn, ["Offerta", "offerta (2)"]);
   console.log("engine: capitale a rischio, stati verifica/scelta, chiusura delle strade ok");
+  // 58. correzioni dal test sui 10 casi
+  assert.equal(E.isStatusQuo({ id: "t", name: "Resto in affitto 2 anni", kd: "temp", s: {} } as never), false);
+  assert.equal(E.isStatusQuo({ id: "t", name: "Resto in affitto", s: {} } as never), true);
+  const odd = { id: "x", name: "Apro", s: {}, impacts: [{ r: "cash_m", v: [-1500, 2000, 2500] }] } as never as import("../lib/engine.ts").Opt;
+  assert.ok(E.oddScenario(odd));
+  (odd.impacts![0] as { okSf?: boolean }).okSf = true;
+  assert.equal(E.oddScenario(odd), null);   // confermato: è la stessa strada andata peggio
+  console.log("engine: correzioni dal test sui 10 casi ok");
 }

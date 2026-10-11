@@ -609,6 +609,7 @@ export default function DecisionPage() {
               <button className="btn sm" disabled={aiBusy} onClick={() => { setMore(true); runPremessa(false); window.scrollTo({ top: 0 }); }}><Sparkles size={14} /> Aggiorna la premessa</button>
             </div>
           )}
+          {(() => { const ns = act.map((o) => o.name.trim().toLowerCase()).filter(Boolean); const dup = ns.filter((n, i) => ns.indexOf(n) !== i); return dup.length ? <div className="note warn" style={{ fontSize: 14 }}>Due strade hanno lo stesso nome ({[...new Set(dup)].join(", ")}): rinominale, altrimenti nel report e nel Registro non le distingui.</div> : null; })()}
           {dilemma && <Dilemma d={dilemma} add={addPlan} drop={dropPlan} close={closePaths} />}
           {m.closed && !dilemma?.stale && <div className="note row between" style={{ fontSize: 14 }}><span>Hai dichiarato il {new Date(m.closed.at).toLocaleDateString("it-IT")} che non esistono altre strade realisticamente perseguibili.</span><button className="btn ghost sm" onClick={() => setM((mm) => { delete mm.closed; })}>Riapri</button></div>}
           {((m.scartate ?? []).length > 0 || m.options.some(isOut)) && (
@@ -639,7 +640,7 @@ export default function DecisionPage() {
                   <select aria-label="Stato della strada" className="stsel" value={o.st ?? "attiva"} onChange={(e) => {
                     const v = e.target.value as OptState;
                     // «Scelta» non è un'etichetta: si registra nel Registro (con cosa ti aspetti e quando verificarlo)
-                    if (v === "scelta") { if (isOut(o)) { alert("Questa strada è non perseguibile o abbandonata: prima riattivala, poi potrai sceglierla."); return; } router.push(`/app/registro?d=${d.id}&o=${encodeURIComponent(o.name)}`); return; }
+                    if (v === "scelta") { if (isOut(o)) { alert("Questa strada è non perseguibile o abbandonata: prima riattivala, poi potrai sceglierla."); return; } router.push(`/app/registro?d=${d.id}&o=${o.id}`); return; }
                     setM((mm) => { const x = opt(mm, o.id); x.st = v; x.stAt = new Date().toISOString(); if (!isOut(x)) delete x.stWhy; });
                   }}>
                     {(Object.keys(OPT_ST) as OptState[]).map((k) => <option key={k} value={k}>{k === "scelta" && o.st !== "scelta" ? "Scelta… (registra)" : OPT_ST[k]}</option>)}
@@ -956,8 +957,8 @@ export default function DecisionPage() {
                       </div>) : null; })()}
                     {(() => { const od = oddScenario(o); return od ? (
                       <div className="note warn" style={{ fontSize: 13, marginTop: 6 }}>
-                        «Se va male» ({eur(od.sf)}) è lontano dal probabile ({eur(od.c)}) e cambia segno: così descrive un altro evento, come perdere lo stipendio, non la stessa strada andata peggio. Gli scenari diventano fuorvianti.
-                        <div className="row" style={{ gap: 6, marginTop: 6 }}><button className="btn sm" onClick={() => setCm(0, od.fix)}>Usa {eur(od.fix)} (probabile −25%)</button><small>oppure scrivi il tuo valore</small></div>
+                        «Se va male» ({eur(od.sf)}) è lontano dal probabile ({eur(od.c)}) e cambia segno. È la stessa strada andata peggio (es. meno clienti) o un altro evento (es. perdere lo stipendio)? Se è un altro evento, gli scenari diventano fuorvianti.
+                        <div className="row" style={{ gap: 6, marginTop: 6, flexWrap: "wrap" }}><button className="btn sm" onClick={() => setM((mm) => { const x = opt(mm, o.id).impacts?.find((z) => z.r === "cash_m"); if (x) x.okSf = true; })}>È corretto: stessa strada andata peggio</button><button className="btn sm ghost" onClick={() => setCm(0, od.fix)}>Usa {eur(od.fix)} (probabile −25%)</button></div>
                       </div>) : null; })()}
                   </div>
                   <div>

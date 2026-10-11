@@ -17,7 +17,7 @@ export type Profile = {
 export type Snapshot = { id: string; label: string; input: SnapInput; result: unknown; created_at: string };
 export type SnapInput = { decisions: Decision[]; deps: Dep[]; resources: Resources; rules: Rule[]; horizon: number };
 export type Outcome = {
-  id: string; decision_id: string | null; decision_name: string; chosen: string; decided_at: string;
+  id: string; decision_id: string | null; decision_name: string; chosen: string; chosen_id?: string | null; decided_at: string;
   expected?: string | null; review_at?: string | null; observed?: string | null; cause?: string | null; snapshot_id?: string | null;
 };
 export type Dec = Decision & { updated_at?: string; created_at?: string };
@@ -152,7 +152,9 @@ export default function Workspace({ children }: { children: React.ReactNode }) {
         setOutcomes((x) => x.map((y) => (y.id === id ? { ...y, ...rest } : y)));
         chk(await sb().from("outcomes").update(rest).eq("id", id));
       } else {
-        const r = await sb().from("outcomes").insert(o).select().single();
+        let r = await sb().from("outcomes").insert(o).select().single();
+        // database non ancora aggiornato (manca chosen_id): salva comunque, l'id resta nello stato della strada e nell'analisi congelata
+        if (r.error && /chosen_id/.test(r.error.message)) { const { chosen_id: _x, ...rest } = o as Outcome; r = await sb().from("outcomes").insert(rest).select().single(); }
         if (r.error) { setErr(r.error.message); return; }
         setOutcomes((x) => [r.data as Outcome, ...x]);
       }

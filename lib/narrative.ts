@@ -125,6 +125,8 @@ export function briefing(dec: Decision, r: DecResult, o: Opt, base: Resources = 
   const cs = [...(o.cond ?? [])].filter((c) => c.st !== "si").sort((a, b) => Number(!!b.gate) - Number(!!a.gate));
   for (const c of cs.slice(0, 3)) watch.push(c.st === "no" ? `Non soddisfatta: ${c.t}.` : `Deve essere vero: ${c.t}${c.gate ? " (senza, la strada cade)" : ""}.`);
   for (const p of row?.pending ?? []) watch.push(`Requisito da verificare: ${p}.`);
+  // limiti superati già nel caso probabile, entro 12 mesi (soldi, ore o risorse tue)
+  if (rules.length) { const pr = applyCombo([o.id], new Map([[o.id, o]]), [], base, rules, 12, 1); if (pr.viol.length) watch.push(`Supera i tuoi limiti già nel caso probabile: ${pr.viol.join("; ")}.`); }
   // rischi più pesanti
   const rv = riskViews(o, base, rules).sort((a, b) => RISK_W[b.p] * -b.tot - RISK_W[a.p] * -a.tot || (b.p === "alta" ? 1 : 0) - (a.p === "alta" ? 1 : 0));
   for (const k of rv.filter((x) => x.p !== "bassa").slice(0, 2))

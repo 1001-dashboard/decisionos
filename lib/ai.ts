@@ -25,8 +25,8 @@ export function compact(d: Decision, r: DecResult | undefined, opts: { eco: bool
       const nmC = m.criteria.find((c) => c.id === k.crit)?.name;
       return !opts.eco && money(k.crit) ? `${nmC}: soglia minima/massima in € (oscurata)` : `${nmC} ${k.min != null ? "≥" + k.min : ""}${k.max != null ? "≤" + k.max : ""}`;
     }),
-    o: m.options.map((o) => ({
-      id: o.id, n: tx(o.name),
+    o: m.options.map((o, i) => ({
+      k: optCode(i), n: tx(o.name),
       s: Object.fromEntries(m.criteria.map((c) => {
         if (c.kind === "num") {
           if (o.raw?.[c.id] == null) return [c.name, null];
@@ -103,7 +103,7 @@ export function mergeStrade(m: Model, x: AiStrade & { ph?: unknown; ar?: unknown
   const added: string[] = [];
   for (const a of arr<AiPlan>(x.a).filter((a) => a && typeof a.n === "string" && a.n.trim()).slice(0, 6)) {
     const pl = planFromAi(a, phasesOf(mm), areasOf(mm));
-    const ex = mm.options.find((o) => norm(o.name) === norm(a.n));
+    const ex = findOpt(mm.options, a.n);
     if (ex) {
       if (!ex.tl?.length && pl.tl) ex.tl = pl.tl;
       const nx = new Set((ex.next ?? []).map(norm)), nc = new Set((ex.cond ?? []).map((c) => norm(c.t))), nr = new Set((ex.risks ?? []).map((r) => norm(r.t)));
@@ -133,6 +133,16 @@ export type AiStruct = {
 };
 
 const norm = (s: string) => String(s ?? "").trim().toLowerCase();
+/** Codice stabile della strada per l'AI: A, B, C… (posizione), così le risposte si agganciano all'id e non al nome. */
+export const optCode = (i: number) => String.fromCharCode(65 + i);
+/** Trova la strada a cui si riferisce l'AI: prima il codice («B», «B) …»), poi il nome normalizzato. */
+export function findOpt<T extends { name: string }>(opts: T[], ref: unknown): T | undefined {
+  const r = String(ref ?? "").trim();
+  const m = r.match(/^([A-Z])(?:\)|:|\.|$|\s)/);
+  if (m) { const o = opts[m[1].charCodeAt(0) - 65]; if (o) return o; }
+  const nm = norm(r.replace(/^[A-Z]\)\s*/, ""));
+  return opts.find((o) => norm(o.name) === nm);
+}
 /** L'AI può restituire forme inattese: tutto ciò che deve essere una lista lo diventa, il resto si scarta. */
 const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
@@ -148,8 +158,11 @@ export function structToModel(x: AiStruct): { name: string; model: Model; questi
   const tipo = typeof x.k === "string" ? x.k : undefined;
   const hz = hzFromAi(x.ph, x.ar);
   const phs = hz.phases ?? phasesOf({ tipo }), ars = hz.areas ?? areasOf({ tipo });
+  const seenN = new Map<string, number>();
   const options = arr<NonNullable<AiStruct["a"]>[0]>(x.a).filter((a) => typeof a === "string" || (a && typeof a.n === "string")).slice(0, 5).map((a) => {
-    const o: AiPlan = typeof a === "string" ? { n: a } : a;
+    const o0: AiPlan = typeof a === "string" ? { n: a } : a;
+    const c = (seenN.get(norm(o0.n)) ?? 0) + 1; seenN.set(norm(o0.n), c);
+    const o: AiPlan = c > 1 ? { ...o0, n: `${o0.n} (${c})` } : o0;   // due strade con lo stesso nome: le distinguiamo
     return { id: uid(), name: o.n, s: {} as Record<string, number>, raw: {} as Record<string, number>, m: {} as NonNullable<Model["options"][0]["m"]>,
       impacts: [] as NonNullable<Model["options"][0]["impacts"]>, pro: short(o.p), con: short(o.m), ...planFromAi(o, phs, ars) };
   });
@@ -206,7 +219,7 @@ export function contiFromAi(m: Model, x: AiConti): { model: Model; questions: st
   const have = new Set((mm.oggi ?? []).map((l) => norm(l.t)));
   mm.oggi = [...(mm.oggi ?? []), ...ai0.filter((l) => !have.has(norm(l.t)))].slice(0, 20);
   for (const sx of arr<NonNullable<AiConti["s"]>[0]>(x.s)) {
-    const o = mm.options.find((y) => norm(y.name) === norm(sx?.a ?? ""));
+    const o = findOpt(mm.options, sx?.a);
     if (!o) continue;
     if (o.conti?.length) {
       for (const l of arr<AiLine>(sx.l).map(toLine).filter((z): z is Line => !!z)) { const ex = o.conti.find((y) => norm(y.t) === norm(l.t)); if (ex) fill(ex, l); }
@@ -228,7 +241,7 @@ export function contiPayload(d: Decision, eco: boolean, answers: string[] = []) 
   const tx = (t?: string) => (t == null ? undefined : eco ? t : redactMoney(t));
   const ln = (l: Line) => (eco && l.v != null ? `${l.t} ${l.k === "e" ? "+" : "-"}${l.v}${l.u ? " una tantum" : ""}` : `${l.t} (${l.k === "e" ? "entrata" : "spesa"})`);
   return {
-    t: tx(d.descr), a: d.model.options.filter((o) => o.st !== "np" && o.st !== "abbandonata").map((o) => o.name),
+    t: tx(d.descr), a: d.model.options.map((o, i) => (o.st !== "np" && o.st !== "abbandonata" ? `${optCode(i)}) ${tx(o.name)}` : "")).filter(Boolean),
     ...(d.model.assumptions?.length ? { i: d.model.assumptions.map((a) => tx(a.t)) } : {}),
     ...(d.model.oggi?.length ? { o: d.model.oggi.map(ln) } : {}),
     ...(answers.length ? { r: answers.map((a) => tx(a)) } : {}),

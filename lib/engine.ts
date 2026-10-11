@@ -9,7 +9,7 @@ export type Crit = {
 };
 export type Constraint = { id: string; name: string; crit: string; min?: number | null; max?: number | null };
 /** src: chi ha messo il valore. "ai" = stima dell'Analista non ancora confermata da te. */
-export type Impact = { r: string; v: number | [number, number, number]; tag?: string; src?: "ai" | "user" | "conti" };
+export type Impact = { r: string; v: number | [number, number, number]; tag?: string; src?: "ai" | "user" | "conti"; okSf?: boolean };
 /** Voce dei conti. k: e = entrata, s = spesa. v = importo probabile (positivo); lo/hi = caso peggiore/migliore (facoltativi).
  *  u: true = una tantum. f: D = detto da te, S = stima (AI o tua), F = verificato. from = voce copiata dai conti di oggi. */
 export type Line = { id: string; t: string; k: "e" | "s"; v?: number | null; lo?: number | null; hi?: number | null; u?: boolean; f?: "D" | "S" | "F"; src?: "ai" | "user"; from?: string; note?: string };
@@ -550,7 +550,7 @@ export function biasChecks(dec: Decision, r: DecResult): Bias[] {
   if (nc >= 2 && nc > np)
     out.push({ k: "contro", t: `Per ${A.name} hai ${nc} contro e ${np} pro, eppure è prima. I contro sono già tutti dentro i criteri, o ce n'è qualcuno che stai ignorando?` });
   // 4. manca l'alternativa di non cambiare
-  if (!dec.model.options.some((o) => /com'è|status quo|resto|restare|rimango|rimanere|non (cambio|faccio|assumo|compro)|aspett|rimand|tengo/i.test(o.name)))
+  if (!dec.model.options.some((o) => isStatusQuo(o) || o.kd === "rinvio" || o.kd === "cerca" || /com'è|status quo|\bresto\b|restare|come ora|come adesso|rimango|rimanere|non (cambio|faccio|assumo|compro|mi iscrivo|prendo)|aspett|rimand|tengo|lascio/i.test(o.name)))
     out.push({ k: "statusquo", t: "Tra le alternative manca «lasciare tutto com'è». Senza un confronto con lo stato attuale ogni novità sembra migliore di quello che è." });
   // 5. margine minimo con un solo criterio decisivo: decisione di pancia mascherata
   if ((r.margin ?? 0) > 0 && (r.margin ?? 0) < 2)
@@ -715,7 +715,7 @@ export function focus(dec: Decision, r: DecResult, turns: Turn[] = [], info?: In
   } else {
     decide = info.length
       ? `Nessun dato mancante o stimato può cambiare chi è in testa: le informazioni che hai bastano per decidere.`
-      : turns[0] ? `Nessun dato è incerto. La scelta cambierebbe solo se: ${turns[0].text}` : "Nessun dato è incerto e nessun singolo valore ribalta la classifica.";
+      : turns[0] ? `Nessun dato è incerto. La scelta cambierebbe solo ${turns[0].text.replace(/^Se /, "se ")}` : "Nessun dato è incerto e nessun singolo valore ribalta la classifica.";
     if (r.fragile.length) {
       todo = `I dati bastano; la scelta dipende da quanto conta ${r.fragile.map((f) => `«${f.name}»`).join(" e ")}. Chiediti se l'importanza che hai dato è davvero quella, poi decidi.`;
       act = "pesi";
@@ -735,7 +735,8 @@ export type Dilemma = { msg: string; sugg: { kd: PlanKind; name: string; why: st
 /** Impronta del contesto su cui hai dichiarato chiuso lo spazio delle alternative: racconto + strade attive (nome e tipo). */
 export const closedHash = (dec: Decision) => hashOf({ t: (dec.descr ?? "").trim(), o: dec.model.options.filter((o) => !isOut(o)).map((o) => `${norm2(o.name)}|${o.kd ?? "base"}`).sort() });
 const SQ = /\b(resto|rest[ao] (dove|com)|rifiut|lascio|lasciare|com'è|com’è|fermo|non (faccio|accetto|cambio)|niente|rimango|status quo)/i;
-export const isStatusQuo = (o: Opt) => o.kd === "sq" || SQ.test(o.name);
+// se hai indicato un tipo diverso (temporanea, prova…), il nome non basta a farne uno status quo («Resto in affitto 2 anni» è temporanea)
+export const isStatusQuo = (o: Opt) => o.kd === "sq" || ((!o.kd || o.kd === "base") && SQ.test(o.name));
 const norm2 = (s: string) => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 
 export function falseDilemma(dec: Decision): Dilemma | null {
@@ -758,9 +759,12 @@ export function falseDilemma(dec: Decision): Dilemma | null {
   // resta visibile finché c'è anche una sola strada plausibile non considerata, oppure finché non dichiari che non ce ne sono altre
   // la dichiarazione vale solo per il contesto in cui l'hai fatta: se racconto o strade cambiano, decade
   const cl = dec.model.closed;
-  const stale = !!cl?.hash && cl.hash !== closedHash(dec);
+  // una chiusura senza impronta (versioni precedenti) non è verificabile: va riconfermata una volta
+  const stale = !!cl && cl.hash !== closedHash(dec);
   if ((cl && !stale) || !(binary || sq) || !sugg.length) return null;
-  const msg = sq && binary
+  const msg = !binary
+    ? `Hai già più strade, ma una proposta non è ancora stata valutata: ${sugg.map((x) => `«${x.name}»`).join(", ")}. Aggiungila, segnala che non è perseguibile o dichiara chiuso lo spazio delle alternative.`
+    : sq && binary
     ? `Stai confrontando «${L}» con il restare dove sei: quasi sempre è un falso dilemma. Le scelte reali hanno strade intermedie, che spesso sono le migliori.`
     : binary ? "Ci sono solo due strade: probabilmente ne mancano." : "Manca almeno una strada intermedia tra sì e no.";
   return stale
@@ -835,7 +839,7 @@ export function readiness(dec: Decision, r: DecResult, base: Resources = {}, rul
     else if (rk.p === "alta" && !rk.x) open.push({ key: "rx" + rk.id, t: `Rischio alto senza contromisura: «${rk.t}»${rk.tot ? ` (se succede: ${eur(rk.tot)})` : ""}`, how: `Decidi cosa faresti se succede «${rk.t}» e scrivilo nel registro dei rischi`, gate: false, kind: "rischio", grp: "chiarire", optId: o.id });
   }
   const sol = solidity(dec, r);
-  if (sol && sol.estShare + sol.unkShare >= 50) open.push({ key: "basi", t: `Solo il ${100 - sol.estShare - sol.unkShare}% del punteggio di ${L.name} poggia su dati certi o dichiarati; il ${sol.estShare + sol.unkShare}% deriva da stime o valori senza fonte`, how: "Rendi certi i valori che pesano di più e indica da dove vengono", gate: false, kind: "basi", grp: "chiarire", optId: L.id });
+  if (sol && sol.estShare + sol.unkShare >= 50) open.push({ key: "basi", t: 100 - sol.estShare - sol.unkShare <= 0 ? `Nessuna parte del punteggio di ${L.name} poggia su dati certi o dichiarati: è tutto stime o valori senza fonte` : `Solo il ${100 - sol.estShare - sol.unkShare}% del punteggio di ${L.name} poggia su dati certi o dichiarati; il ${sol.estShare + sol.unkShare}% deriva da stime o valori senza fonte`, how: "Rendi certi i valori che pesano di più e indica da dove vengono", gate: false, kind: "basi", grp: "chiarire", optId: L.id });
   const dop = biasChecks(dec, r).find((b) => b.k === "doppio");
   if (dop) open.push({ key: "dop", t: `Possibile doppio conteggio: ${dop.t}`, how: "Togli uno dei criteri che misurano la stessa cosa, o abbassane l'importanza", gate: false, kind: "doppio", grp: "chiarire" });
   for (const x of dec.model.options) {
@@ -846,10 +850,10 @@ export function readiness(dec: Decision, r: DecResult, base: Resources = {}, rul
   for (const x of dec.model.options) {
     const od = oddScenario(x);
     if (od && (x.id === L.id || x.id === fallback?.id))
-      open.push({ key: "sc" + x.id, t: `Lo scenario «se va male» di ${x.name} ipotizza ${od.sf} €/mese contro ${od.c} €/mese probabili: sembra un altro evento (es. perdere lo stipendio), non una variazione della stessa strada`, how: `Correggi «se va male» di ${x.name} al passo «Soldi e tempo» con una variazione realistica (es. affitto più alto); se temi di perdere il lavoro, rendilo una strada o un rischio a parte`, gate: false, kind: "scenario", grp: "chiarire", optId: x.id });
+      open.push({ key: "sc" + x.id, t: `Per ${x.name} «se va male» è ${eur(od.sf)}/mese contro ${eur(od.c)}/mese probabili: è la stessa strada andata peggio (es. meno clienti) o un altro evento (es. perdere lo stipendio)?`, how: `Al passo «Soldi e tempo» conferma che è la stessa strada andata peggio, oppure correggilo e rendi l'altro evento un rischio a parte`, gate: false, kind: "scenario", grp: "chiarire", optId: x.id });
   }
   // un falso dilemma impedisce «Pronta»: la scelta migliore tra strade incomplete non è una decisione pronta
-  if (dilemma) open.push({ key: "dil", t: `Stai confrontando solo poche strade: ${dilemma.msg}`, how: `Al passo «Strade» aggiungi o segna come non perseguibili le strade proposte (${dilemma.sugg.map((x) => `«${x.name}»`).join(", ")}), oppure dichiara che non esistono altre strade realisticamente perseguibili`, gate: false, kind: "dilemma", grp: "chiarire" });
+  if (dilemma) open.push({ key: "dil", t: dilemma.msg, how: `Al passo «Strade» aggiungi o segna come non perseguibili le strade proposte (${dilemma.sugg.map((x) => `«${x.name}»`).join(", ")}), oppure dichiara che non esistono altre strade realisticamente perseguibili`, gate: false, kind: "dilemma", grp: "chiarire" });
   const rv = revCheck(dec, r, base);
   if (rv) open.push({ key: "rev", t: rv.t, how: rv.how, gate: false, kind: "rev", grp: "chiarire", optId: L.id });
   const lrv = revOf(o, base);
@@ -878,7 +882,7 @@ export const fallbackText = (rd: Ready) => !rd.fallback ? "" : rd.fallback.open.
  *  (es. +2.000 probabile, −1.500 se va male): non è una variazione della stessa strada ma un altro evento. */
 export function oddScenario(o: Opt): { sf: number; c: number; fv: number; fix: number } | null {
   const i = (o.impacts ?? []).find((x) => x.r === "cash_m" && Array.isArray(x.v));
-  if (!i) return null;
+  if (!i || i.okSf) return null;   // hai confermato che è la stessa strada andata peggio
   const [sf, c, fv] = i.v as [number, number, number];
   if (c > 0 && sf < 0 && c - sf > Math.max(c * 0.6, 400)) return { sf, c, fv, fix: Math.round((c * 0.75) / 50) * 50 };
   return null;
@@ -996,7 +1000,7 @@ export function revOf(o: Opt, base: Resources = {}): RevInfo | null {
   const cap = Math.abs(r.in ?? 0) + Math.abs(r.out ?? 0);
   // capitale «alto»: oltre un quarto dei risparmi di oggi, o oltre 10.000 € se non li hai indicati
   const capHigh = cap > 0 && (base.cash0 ? cap >= Math.abs(base.cash0) * 0.25 : cap >= 10000);
-  const parts = [r.in ? `entrare costa ${eur(Math.abs(r.in))}` : "", r.out ? `uscire costa ${eur(Math.abs(r.out))}` : "", r.back != null ? `per tornare indietro servono ${fmt(r.back)} mesi` : "", r.lock ? `lock-in ${r.lock}` : ""].filter(Boolean);
+  const parts = [r.in ? `entrare costa ${eur(Math.abs(r.in))}` : "", r.out ? `uscire costa ${eur(Math.abs(r.out))}` : "", r.back != null ? (r.back === 1 ? "per tornare indietro serve 1 mese" : `per tornare indietro servono ${fmt(r.back)} mesi`) : "", r.lock ? `lock-in ${r.lock}` : ""].filter(Boolean);
   const op = irr ? "Difficile da invertire" : rev ? "Operativamente reversibile" : "Reversibile in parte";
   const label = cap ? `${op}, ma provarla espone ${eur(cap)} di capitale${capHigh ? " (alto rispetto ai tuoi risparmi)" : ""}` : op;
   return { irr, rev, text: parts.join(", "), cap, capHigh, label };
@@ -1007,13 +1011,14 @@ export function revCheck(dec: Decision, r: DecResult, base: Resources = {}): { t
   if (ok.length < 2) return null;
   const L = dec.model.options.find((o) => o.id === ok[0].id)!;
   const lr = revOf(L, base);
-  if (!lr?.irr) return null;
+  const rank = (x: RevInfo | null) => (!x ? -1 : x.irr ? 0 : x.rev ? 2 : 1);
+  if (!lr || lr.rev) return null;
   for (const row of ok.slice(1)) {
     const o = dec.model.options.find((x) => x.id === row.id)!;
     const orv = revOf(o, base);
     const gap = Math.round((ok[0].score - row.score) * 10) / 10;
-    if (orv?.rev && !orv.capHigh && gap <= 5)
-      return { t: `«${L.name}» supera «${o.name}» di soli ${fmt(gap)} punti ma è molto più difficile da invertire (${lr.text}); «${o.name}» invece è reversibile (${orv.text})`, how: `Chiediti se ${fmt(gap)} punti valgono il lock-in, oppure rendi «${L.name}» più reversibile (clausola di uscita, periodo di prova)` };
+    if (orv && rank(orv) > rank(lr) && !orv.capHigh && orv.cap <= lr.cap && gap <= 5)
+      return { t: `«${L.name}» ${gap > 0 ? `supera «${o.name}» di soli ${fmt(gap)} punti` : `è alla pari con «${o.name}»`} ma è ${lr.irr ? "molto " : ""}più difficile da invertire (${lr.text}); «${o.name}» invece è ${orv.rev ? "reversibile" : "più reversibile"} (${orv.text})`, how: `${gap > 0 ? `Chiediti se ${fmt(gap)} punti valgono la minore reversibilità` : `A parità di punteggio parti dalla strada più facile da invertire`}, oppure rendi «${L.name}» più reversibile (clausola di uscita, periodo di prova)` };
   }
   return null;
 }
