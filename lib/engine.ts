@@ -58,6 +58,9 @@ export const RISK_W: Record<RiskP, number> = { bassa: 0.1, media: 0.3, alta: 0.6
 export type PlanKind = "base" | "cond" | "prova" | "temp" | "rinvio" | "cerca" | "sq";
 export const PLAN_L: Record<PlanKind, string> = { base: "Diretta", cond: "Condizionata", prova: "Sperimentale / pilota", temp: "Temporanea", rinvio: "Rinviata", cerca: "Alternativa", sq: "Status quo" };
 export const PLAN_D: Record<PlanKind, string> = { base: "la scelta così com'è", cond: "solo se certe condizioni sono garantite", prova: "in piccolo o in prova, con verifica e uscita", temp: "per un periodo definito, poi si rivede", rinvio: "più avanti, quando arrivano informazioni", cerca: "un'altra opzione al posto di questa", sq: "lasciare le cose come stanno" };
+export type OptState = "attiva" | "verifica" | "np" | "abbandonata" | "scelta";
+export const OPT_ST: Record<OptState, string> = { attiva: "Attiva", verifica: "Da verificare", np: "Non perseguibile", abbandonata: "Abbandonata", scelta: "Scelta" };
+export const isOut = (o: Opt) => o.st === "np" || o.st === "abbandonata";
 export type Opt = {
   id: string; name: string; note?: string;
   kd?: PlanKind;
@@ -66,6 +69,11 @@ export type Opt = {
   cond?: Cond[];     // cosa deve essere vero
   risks?: Risk[];    // cosa può andare storto, con impatto
   conti?: Line[];    // bilancio mensile con questa strada (parte da una copia di quello di oggi)
+  /** stato reale: attiva, da verificare, non perseguibile, abbandonata, scelta. «Esclusa da vincoli» è calcolata. */
+  st?: OptState; stWhy?: string; stAt?: string;
+  /** reversibilità: costo di entrare e di uscire (€), mesi per tornare indietro, lock-in */
+  rev?: { in?: number | null; out?: number | null; back?: number | null; lock?: "basso" | "medio" | "alto" };
+  exp?: string | null;   // data in cui questa strada scade (offerta, promozione, bando)
   pro?: string[]; con?: string[];   // pro e contro a parole (spunti da verificare)
   s: Record<string, number>;
   raw?: Record<string, number>;
@@ -83,6 +91,10 @@ export type Model = {
   scartate?: { kd: PlanKind; name: string; why?: string; at: string }[];
   /** il tuo bilancio di oggi, al mese: punto di partenza dei conti di ogni strada */
   oggi?: Line[];
+  /** costo del non decidere: € al mese che perdi aspettando, e cosa succede */
+  wait?: { m?: number | null; t?: string };
+  /** valore dell'informazione: per ogni dato che può ribaltare la scelta, quanto costa saperlo */
+  voi?: Record<string, { c: "facile" | "medio" | "difficile"; days?: number | null }>;
   areas?: Area[];       // aree delle conseguenze (se assenti: preset per tipo)
   tipo?: string;   // tipo di scelta riconosciuto (lavoro, casa, morale…)
   nota?: string;   // cosa conta poco in questa scelta, secondo l'Analista
@@ -171,6 +183,8 @@ export function feasible(o: Opt, cons: Constraint[], crit: Crit[]) {
   const why: string[] = [], pending: string[] = [];
   if (o.block) why.push(o.block);
   for (const c of o.cond ?? []) if (c.gate && c.st === "no") why.push(`condizione non soddisfatta: ${c.t}`);
+  if (isOut(o)) why.push(`${o.st === "np" ? "non perseguibile" : "abbandonata"}${o.stWhy ? `: ${o.stWhy}` : ""}`);
+  if (o.exp && o.exp < new Date().toISOString().slice(0, 10)) why.push(`scaduta il ${new Date(o.exp).toLocaleDateString("it-IT")}`);
   for (const k of cons) {
     const c = crit.find((x) => x.id === k.crit);
     if (!c) continue;
@@ -463,7 +477,7 @@ export function crossEffects(optId: string, dec: Decision, others: Decision[], d
   const conf = deps.filter((d) => d.confirmed);
   return others.filter((D) => D.id !== dec.id && D.model.options.length).map((D) => {
     const rD = analyzeDecision(D);
-    const rows = D.model.options.map((x): CrossRow => {
+    const rows = D.model.options.filter((x) => !isOut(x)).map((x): CrossRow => {
       const own = rD.rows.find((y) => y.id === x.id)!;
       if (own.excluded.length) return { id: x.id, name: x.name, ok: false, why: ["già scartata nella sua decisione"], auto: false };
       const why: string[] = [];
@@ -599,7 +613,7 @@ export function infoValue(dec: Decision): InfoItem[] {
   const out: InfoItem[] = [];
   const leader = (model: Model) => analyzeDecision({ ...dec, model }).rows.find((x) => !x.excluded.length)?.id ?? "-";
   const nameOf = (id: string) => (id === "-" ? "nessuna (tutte scartate)" : dec.model.options.find((o) => o.id === id)?.name ?? id);
-  for (const o of dec.model.options) {
+  for (const o of dec.model.options.filter((x) => !isOut(x))) {
     for (const c of nm.criteria) {
       const isNum = c.kind === "num";
       if (isNum && (c.worst == null || c.best == null || c.worst === c.best)) continue;
@@ -718,18 +732,24 @@ export function focus(dec: Decision, r: DecResult, turns: Turn[] = [], info?: In
 export type Dilemma = { msg: string; sugg: { kd: PlanKind; name: string; why: string }[] };
 const SQ = /\b(resto|rest[ao] (dove|com)|rifiut|lascio|lasciare|com'è|com’è|fermo|non (faccio|accetto|cambio)|niente|rimango|status quo)/i;
 export const isStatusQuo = (o: Opt) => o.kd === "sq" || SQ.test(o.name);
+const norm2 = (s: string) => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 
 export function falseDilemma(dec: Decision): Dilemma | null {
-  const opts = dec.model.options;
+  const all = dec.model.options;
+  const opts = all.filter((o) => !isOut(o));   // le strade attive
   if (!opts.length) return null;
-  const gone = new Set((dec.model.scartate ?? []).map((x) => x.kd));
-  const has = (k: PlanKind) => gone.has(k) || opts.some((o) => o.kd === k || (k === "prova" && o.kd === "temp") || (k === "cerca" && o.kd === "rinvio"));
+  // una proposta è «considerata» se esiste una strada attiva di quel tipo, oppure se quella strada concreta (stesso nome) è già stata valutata e scartata
+  const seen = new Set([...all.map((o) => norm2(o.name)), ...(dec.model.scartate ?? []).map((x) => norm2(x.name))]);
+  const has = (k: PlanKind, name: string) => seen.has(norm2(name)) || opts.some((o) => o.kd === k || (k === "prova" && o.kd === "temp") || (k === "cerca" && o.kd === "rinvio"));
   const sq = opts.some(isStatusQuo);
   const L = (opts.find((o) => !isStatusQuo(o) && (!o.kd || o.kd === "base")) ?? opts[0]).name;
   const sugg: Dilemma["sugg"] = [];
-  if (!has("cond")) sugg.push({ kd: "cond", name: `${L}, solo a condizioni`, why: "Dici sì solo se le condizioni chiave (soldi, casa, tempi) sono garantite, meglio per iscritto." });
-  if (!has("prova")) sugg.push({ kd: "prova", name: `${L} in prova o in piccolo, con verifica e uscita`, why: "Provi per un periodo o su scala ridotta (prova, pilota, test), con una data di verifica e un modo concreto per tornare indietro." });
-  if (!has("cerca") && sq) sugg.push({ kd: "cerca", name: "Non ora: cerco attivamente un'alternativa", why: "Restare fermo diventa una strada attiva: cerchi un'altra opzione, con una scadenza." });
+  const cand: Dilemma["sugg"] = [
+    { kd: "cond", name: `${L}, solo a condizioni`, why: "Dici sì solo se le condizioni chiave (soldi, casa, tempi) sono garantite, meglio per iscritto." },
+    { kd: "prova", name: `${L} in prova o in piccolo, con verifica e uscita`, why: "Provi per un periodo o su scala ridotta (prova, pilota, test), con una data di verifica e un modo concreto per tornare indietro." },
+    ...(sq ? [{ kd: "cerca" as PlanKind, name: "Non ora: cerco attivamente un'alternativa", why: "Restare fermo diventa una strada attiva: cerchi un'altra opzione, con una scadenza." }] : []),
+  ];
+  for (const c of cand) if (!has(c.kd, c.name)) sugg.push(c);
   const binary = opts.length <= 2;
   if (!(binary || sq) || sugg.length < 2) return null;
   const msg = sq && binary
@@ -740,9 +760,10 @@ export function falseDilemma(dec: Decision): Dilemma | null {
 
 /* ---------- Decisione condizionata ---------- */
 export type CondKind = "utente" | "requisito" | "dato" | "liquidita" | "stimeAI" | "basi" | "doppio";
-export type CondKind2 = CondKind | "scenario" | "rischio" | "dilemma";
+export type CondKind2 = CondKind | "scenario" | "rischio" | "dilemma" | "rev";
 /** grp: «cond» = se è falsa la strada non regge; «chiarire» = l'analisi non è ancora abbastanza affidabile. */
-export type CondView = { key: string; t: string; how: string; gate: boolean; kind: CondKind2; grp: "cond" | "chiarire"; optId?: string; condId?: string; st?: Cond["st"] };
+export type VoiView = { key: string; power: number; c?: "facile" | "medio" | "difficile"; days?: number | null; worth: "si" | "forse" | "no" | "?"; late: boolean };
+export type CondView = { key: string; t: string; how: string; gate: boolean; kind: CondKind2; grp: "cond" | "chiarire"; optId?: string; condId?: string; st?: Cond["st"]; voi?: VoiView };
 export type Ready = {
   state: "vuota" | "nessuna" | "non_pronta" | "pronta";
   lead?: { id: string; name: string };
@@ -750,6 +771,7 @@ export type Ready = {
   fallback?: { id: string; name: string; open: string[] } | null;
   open: CondView[]; done: CondView[]; failed: CondView[];
   dilemma: Dilemma | null;
+  wait?: WaitView;
 };
 
 export function readiness(dec: Decision, r: DecResult, base: Resources = {}, rules: Rule[] = [], info?: InfoItem[]): Ready {
@@ -775,8 +797,11 @@ export function readiness(dec: Decision, r: DecResult, base: Resources = {}, rul
   const uo = uc.filter((c) => c.st === "?");
   uo.filter((c) => c.gate).forEach((c) => open.push(c));
   for (const p of L.pending) open.push({ key: "p" + p, t: p.replace(": manca il dato", ""), how: `Trova il dato per «${p.replace(": manca il dato", "")}» e inseriscilo al passo «Valuta»`, gate: true, kind: "requisito", grp: "cond", optId: L.id });
-  for (const i of (info ?? infoValue(dec)).filter((x) => x.flips).slice(0, 3))
-    open.push({ key: "d" + i.opt + i.crit,
+  const wv = waitView(dec);
+  const hot = (info ?? infoValue(dec)).filter((x) => x.flips).map((i) => ({ i, v: voiOf(dec, "d" + i.opt + i.crit, i.share, wv) }))
+    .sort((a, b) => voiRank(b.v) - voiRank(a.v)).slice(0, 3);
+  for (const { i, v } of hot)
+    open.push({ key: "d" + i.opt + i.crit, voi: v,
       // una soglia su una cifra è una condizione; un giudizio ancora stimato è una cosa da chiarire
       grp: i.num ? "cond" : "chiarire",
       t: !i.num
@@ -798,7 +823,7 @@ export function readiness(dec: Decision, r: DecResult, base: Resources = {}, rul
     else if (rk.p === "alta" && !rk.x) open.push({ key: "rx" + rk.id, t: `Rischio alto senza contromisura: «${rk.t}»${rk.tot ? ` (se succede: ${eur(rk.tot)})` : ""}`, how: `Decidi cosa faresti se succede «${rk.t}» e scrivilo nel registro dei rischi`, gate: false, kind: "rischio", grp: "chiarire", optId: o.id });
   }
   const sol = solidity(dec, r);
-  if (sol && sol.estShare + sol.unkShare >= 50) open.push({ key: "basi", t: `Il punteggio di ${L.name} poggia su dati certi: oggi il ${sol.estShare + sol.unkShare}% viene da stime o valori senza fonte`, how: "Rendi certi i valori che pesano di più e indica da dove vengono", gate: false, kind: "basi", grp: "chiarire", optId: L.id });
+  if (sol && sol.estShare + sol.unkShare >= 50) open.push({ key: "basi", t: `Solo il ${100 - sol.estShare - sol.unkShare}% del punteggio di ${L.name} poggia su dati certi o dichiarati; il ${sol.estShare + sol.unkShare}% deriva da stime o valori senza fonte`, how: "Rendi certi i valori che pesano di più e indica da dove vengono", gate: false, kind: "basi", grp: "chiarire", optId: L.id });
   const dop = biasChecks(dec, r).find((b) => b.k === "doppio");
   if (dop) open.push({ key: "dop", t: `Possibile doppio conteggio: ${dop.t}`, how: "Togli uno dei criteri che misurano la stessa cosa, o abbassane l'importanza", gate: false, kind: "doppio", grp: "chiarire" });
   for (const x of dec.model.options) {
@@ -813,7 +838,9 @@ export function readiness(dec: Decision, r: DecResult, base: Resources = {}, rul
   }
   // un falso dilemma impedisce «Pronta»: la scelta migliore tra strade incomplete non è una decisione pronta
   if (dilemma) open.push({ key: "dil", t: `Stai confrontando solo poche strade: ${dilemma.msg}`, how: `Aggiungi almeno una strada intermedia al passo «Strade» (${dilemma.sugg.map((x) => `«${x.name}»`).join(", ")}) oppure scarta esplicitamente quelle proposte`, gate: false, kind: "dilemma", grp: "chiarire" });
-  return { state: open.length ? "non_pronta" : "pronta", lead: { id: L.id, name: L.name }, fallback, open, done, failed, dilemma };
+  const rv = revCheck(dec, r);
+  if (rv) open.push({ key: "rev", t: rv.t, how: rv.how, gate: false, kind: "rev", grp: "chiarire", optId: L.id });
+  return { wait: wv, state: open.length ? "non_pronta" : "pronta", lead: { id: L.id, name: L.name }, fallback, open, done, failed, dilemma };
 }
 
 /** Frase della regola di stop per una condizione che, se falsa, fa uscire la strada. */
@@ -914,4 +941,54 @@ export function syncConti(m: Model): Model {
     if (c.once) { o.impacts = o.impacts.filter((i) => i.r !== "cash0"); o.impacts.push({ r: "cash0", v: c.once, src: "conti" }); }
   }
   return m;
+}
+
+/* ---------- Costo del non decidere ---------- */
+export type WaitView = { left: number | null; m: number; c7: number; c30: number; c90: number; exp: { id: string; name: string; days: number }[]; t?: string };
+/** Giorni di calendario da oggi a una data (oggi = 0). */
+export const daysTo = (iso: string) => Math.round((Date.parse(iso.slice(0, 10)) - Date.parse(new Date().toISOString().slice(0, 10))) / 86400000);
+/** Quanto costa aspettare 7/30/90 giorni: € persi al mese (indicati da te) e strade che scadono nel frattempo. */
+export function waitView(dec: Decision): WaitView {
+  const m = Math.abs(dec.model.wait?.m ?? 0);
+  const exp = dec.model.options.filter((o) => o.exp && !isOut(o)).map((o) => ({ id: o.id, name: o.name, days: daysTo(o.exp!) })).filter((x) => x.days >= 0).sort((a, b) => a.days - b.days);
+  const lefts = [dec.due ? daysTo(dec.due) : null, exp[0]?.days ?? null].filter((x): x is number => x != null);
+  return { left: lefts.length ? Math.min(...lefts) : null, m, c7: Math.round((m * 7) / 30), c30: m, c90: m * 3, exp, t: dec.model.wait?.t };
+}
+
+/* ---------- Valore dell'informazione: potere di ribaltare × costo per saperlo ---------- */
+const VC: Record<string, number> = { facile: 1, medio: 2, difficile: 4 };
+export function voiOf(dec: Decision, key: string, share: number, wv?: WaitView): VoiView {
+  const x = dec.model.voi?.[key];
+  const power = Math.round(share * 100);
+  const late = !!(x?.days && wv?.left != null && x.days > wv.left);
+  let worth: VoiView["worth"] = "?";
+  if (x) worth = late ? "no" : share >= 0.2 && x.c !== "difficile" ? "si" : share < 0.1 && x.c === "difficile" ? "no" : share >= 0.1 || x.c === "facile" ? "si" : "forse";
+  return { key, power, c: x?.c, days: x?.days ?? null, worth, late };
+}
+const voiRank = (v: VoiView) => (v.worth === "no" ? -1 : v.power / (v.c ? VC[v.c] : 2));
+
+/* ---------- Reversibilità ---------- */
+export function revOf(o: Opt): { irr: boolean; rev: boolean; text: string } | null {
+  const r = o.rev;
+  if (!r || (r.out == null && r.back == null && !r.lock)) return null;
+  const irr = r.lock === "alto" || (r.back ?? 0) >= 12;
+  const rev = r.lock === "basso" || ((r.back ?? 99) <= 3 && r.lock !== "alto");
+  const parts = [r.out ? `uscire costa ${eur(Math.abs(r.out))}` : "", r.back != null ? `per tornare indietro servono ${fmt(r.back)} mesi` : "", r.lock ? `lock-in ${r.lock}` : ""].filter(Boolean);
+  return { irr, rev: rev && !irr, text: parts.join(", ") };
+}
+/** Una strada in testa poco reversibile, con un'alternativa reversibile vicina nel punteggio: va detto. */
+export function revCheck(dec: Decision, r: DecResult): { t: string; how: string } | null {
+  const ok = r.rows.filter((x) => !x.excluded.length);
+  if (ok.length < 2) return null;
+  const L = dec.model.options.find((o) => o.id === ok[0].id)!;
+  const lr = revOf(L);
+  if (!lr?.irr) return null;
+  for (const row of ok.slice(1)) {
+    const o = dec.model.options.find((x) => x.id === row.id)!;
+    const orv = revOf(o);
+    const gap = Math.round((ok[0].score - row.score) * 10) / 10;
+    if (orv?.rev && gap <= 5)
+      return { t: `«${L.name}» supera «${o.name}» di soli ${fmt(gap)} punti ma è molto più difficile da invertire (${lr.text}); «${o.name}» invece è reversibile (${orv.text})`, how: `Chiediti se ${fmt(gap)} punti valgono il lock-in, oppure rendi «${L.name}» più reversibile (clausola di uscita, periodo di prova)` };
+  }
+  return null;
 }

@@ -68,6 +68,7 @@ function Inner() {
                     ))}
                   </ul>
                   {out[k].c && <div className="note">{out[k].c}</div>}
+                  <small className="aisrc"><span className="aitag">AI</span> Testo dell&apos;Analista: non è una fonte verificata. Cifre e fatti valgono solo se compaiono nei tuoi dati o nelle fonti che hai indicato.</small>
                 </>
               )}
             </div>

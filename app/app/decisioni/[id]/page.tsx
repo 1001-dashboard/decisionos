@@ -4,13 +4,13 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Plus, Trash2, Snowflake, CheckCircle2, Bot, Check, AlertCircle, ArrowRight, ArrowLeft,
-  ArrowLeftRight, GitBranch, Sparkles, Calculator, HelpCircle, ListOrdered, Milestone, Lightbulb, StickyNote, Wallet, ChevronDown, TrendingUp, TrendingDown, ShieldAlert, Link2, Scale, Swords, RefreshCw, ThumbsUp, ThumbsDown, X, Brain, FileText,
+  ArrowLeftRight, GitBranch, Sparkles, Calculator, HelpCircle, Hourglass, ListOrdered, Milestone, Lightbulb, StickyNote, Wallet, ChevronDown, TrendingUp, TrendingDown, ShieldAlert, Link2, Scale, Swords, RefreshCw, ThumbsUp, ThumbsDown, X, Brain, FileText,
 } from "lucide-react";
 import { useWs } from "@/components/Workspace";
 import { ScoreBars } from "@/components/charts";
 import {
   analyzeDecision, applyCombo, combos, eur, fmt, normalize, turningPoints, uid, weightsFromImp, scaleNum, levelOf,
-  tradeoff, solidity, crossEffects, hashOf, biasChecks, conclusive, infoValue, readiness, focus, stopText, fallbackText, oddScenario, invertedScenario, isStatusQuo, contiDelta, saldo, syncConti, type Line, riskViews, riskSummary, customRes,
+  tradeoff, solidity, crossEffects, hashOf, biasChecks, conclusive, infoValue, readiness, focus, stopText, fallbackText, oddScenario, invertedScenario, isStatusQuo, contiDelta, saldo, syncConti, isOut, revOf, OPT_ST, type OptState, type Line, riskViews, riskSummary, customRes,
   type Resources, type Rule, type Risk,
   areasOf, phasesOf, snapPhase, PHASE_SETS, PLAN_L, PLAN_D, type Area, type Horizon, type Cond, type Dilemma as DilemmaT, type PlanKind, type Phase,
   LEVELS, type Crit, type Decision, type Impact, type Model, type Opt, type Rel, untestedText } from "@/lib/engine";
@@ -34,12 +34,13 @@ const STEPS = ["Strade", "Conseguenze", "Cosa conta", "Valuta", "Soldi e tempo",
 function status(d: Decision) {
   const m = d.model;
   const scaleMissing = m.criteria.filter((c) => c.kind === "num" && (c.worst == null || c.best == null || c.worst === c.best));
-  const cells = m.options.flatMap((o) => m.criteria.map((c) => ({ o, c })));
+  const cells = m.options.filter((o) => !isOut(o)).flatMap((o) => m.criteria.map((c) => ({ o, c })));
   const missing = cells.filter(({ o, c }) => (c.kind === "num" ? o.raw?.[c.id] == null : o.s?.[c.id] == null));
-  const money = m.options.some((o) => (o.impacts ?? []).length);
-  const done = [m.options.length >= 2, m.criteria.length >= 1 && !scaleMissing.length, cells.length > 0 && !missing.length, money];
+  const money = m.options.some((o) => !isOut(o) && (o.impacts ?? []).length);
+  const done = [m.options.filter((o) => !isOut(o)).length >= 2, m.criteria.length >= 1 && !scaleMissing.length, cells.length > 0 && !missing.length, money];
   const pct = Math.round(((done[0] ? 1 : 0) + (done[1] ? 1 : 0) + (cells.length ? (cells.length - missing.length) / cells.length : 0) + (money ? 0.5 : 0)) / 3.5 * 100);
-  const conseq = m.options.length >= 2 && m.options.every((o) => (o.tl ?? []).length || (o.cond ?? []).length);
+  const actv = m.options.filter((o) => !isOut(o));
+  const conseq = actv.length >= 2 && actv.every((o) => (o.tl ?? []).length || (o.cond ?? []).length);
   return { scaleMissing, missing, cells: cells.length, done, pct, conseq };
 }
 
@@ -202,6 +203,19 @@ function Conseq({ o, i, setM, onNewDecision, base, rules, phs, ars }: { o: Opt; 
         ))}
         <input placeholder="+ rischio (es. contratto non rinnovato a fine stagione)" value={rt} onChange={(e) => setRt(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addRk(); }} onBlur={addRk} />
       </div>
+
+      <div className="stack revbox" style={{ gap: 6 }}>
+        <label className="f">Si può tornare indietro?</label>
+        <div className="rk-num">
+          <span><small>Costo per entrare</small><Num value={o.rev?.in ?? null} w={86} suffix="€" onChange={(v) => edit((x) => { x.rev = { ...x.rev, in: v == null ? null : Math.abs(v) }; })} /></span>
+          <span><small>Costo per uscire</small><Num value={o.rev?.out ?? null} w={86} suffix="€" onChange={(v) => edit((x) => { x.rev = { ...x.rev, out: v == null ? null : Math.abs(v) }; })} /></span>
+          <span><small>Mesi per tornare indietro</small><Num value={o.rev?.back ?? null} w={60} suffix="mesi" onChange={(v) => edit((x) => { x.rev = { ...x.rev, back: v == null ? null : Math.abs(v) }; })} /></span>
+          <span><small>Lock-in</small>
+            <span className="seg sm" role="group" aria-label={`Lock-in ${o.name}`}>{(["basso", "medio", "alto"] as const).map((v) => <button key={v} className={o.rev?.lock === v ? "on" : ""} onClick={() => edit((x) => { x.rev = { ...x.rev, lock: x.rev?.lock === v ? undefined : v }; })}>{v[0].toUpperCase() + v.slice(1)}</button>)}</span></span>
+          <span><small>Scade il (offerta, bando…)</small><input type="date" aria-label={`Scadenza ${o.name}`} value={o.exp ?? ""} onChange={(e) => edit((x) => { x.exp = e.target.value || null; })} style={{ width: 160 }} /></span>
+        </div>
+        {(() => { const r = revOf(o); return r ? <small className={r.irr ? "err" : r.rev ? "ok-t" : "muted"}>{r.irr ? "Difficile da invertire" : r.rev ? "Reversibile" : "Reversibile in parte"}: {r.text}.</small> : <small className="muted">Una strada un po&apos; peggiore ma reversibile può essere più razionale di una migliore ma irreversibile.</small>; })()}
+      </div>
     </div>
   );
 }
@@ -292,6 +306,7 @@ export default function DecisionPage() {
   const [ceco, setCeco] = useState<boolean | null>(null);
   const [prem, setPrem] = useState<{ p: string; f: string[]; q: string[] } | null>(null);
   const [pans, setPans] = useState<string[]>([]);
+  const [adattaMsg, setAdattaMsg] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiErr, setAiErr] = useState("");
   const others = useMemo(() => ws.decisions.filter((x) => x.status === "aperta" && x.id !== id && x.model.options.length), [ws.decisions, id]);
@@ -388,6 +403,7 @@ export default function DecisionPage() {
   }
   const noBase = !(R.cash0 || R.cash_m || R.hours_w);
   const dilemma = ready.dilemma;
+  const act = m.options.filter((o) => !isOut(o));   // strade in gioco: le non perseguibili/abbandonate non chiedono dati
   const phs = phasesOf(m), ars = areasOf(m);
   const cres = customRes(R, ws.profile.resources_meta);
   // cambiare orizzonti: le tappe esistenti si agganciano al nuovo orizzonte più vicino (stesso ordine)
@@ -399,15 +415,16 @@ export default function DecisionPage() {
   });
   const addArea = () => { const a = newArea.trim().toLowerCase(); if (!a) return; setM((mm) => { const cur = areasOf(mm); if (!cur.includes(a)) mm.areas = [...cur, a].slice(0, 10); }); setNewArea(""); };
   const conds = ready.open.filter((c) => c.grp === "cond"), chiar = ready.open.filter((c) => c.grp === "chiarire");
-  const rsum = riskSummary(d, R, ws.profile.rules);
-  const briefOrder = m.options.map((o) => {
+  const rsum = riskSummary(d, R, ws.profile.rules).filter((x) => !isOut(m.options.find((o) => o.id === x.id)!));
+  const briefOrder = m.options.filter((o) => !isOut(o)).map((o) => {
     const row = res.rows.find((x) => x.id === o.id);
     const tag = o.id === ready.lead?.id ? "lead" : o.id === ready.fallback?.id ? "fb" : row?.excluded.length ? "out" : "";
     return { o, b: briefing(d, res, o, R, ws.profile.rules), tag, k: tag === "lead" ? 0 : tag === "fb" ? 1 : tag === "out" ? 3 : 2 };
   }).sort((a, b) => a.k - b.k);
+  const setVoi = (key: string, pt: { c?: "facile" | "medio" | "difficile"; days?: number | null }) => setM((mm) => { const cur = mm.voi?.[key]; mm.voi = { ...mm.voi, [key]: { c: pt.c ?? cur?.c ?? "medio", days: "days" in pt ? pt.days : cur?.days ?? null } }; });
   const setCondSt = (oid: string, cid: string, v: Cond["st"]) => setM((mm) => { const c = opt(mm, oid).cond?.find((x) => x.id === cid); if (c) c.st = v; });
   function addPlan(kd: PlanKind, name: string) {
-    setM((mm) => { if (mm.options.length < 5) mm.options.push({ id: uid(), name, kd, s: {} }); });
+    setM((mm) => { if (mm.options.filter((o) => !isOut(o)).length < 5) mm.options.push({ id: uid(), name, kd, s: {} }); });
   }
   const setOggi = (ls: Line[]) => setM((mm) => { mm.oggi = ls; syncConti(mm); });
   const setConti = (oid: string, ls: Line[] | undefined) => setM((mm) => { const o = opt(mm, oid); if (ls) o.conti = ls; else { delete o.conti; o.impacts = (o.impacts ?? []).filter((x) => x.src !== "conti"); } syncConti(mm); });
@@ -435,8 +452,26 @@ export default function DecisionPage() {
       if (ansT.length) setM((mm) => { mm.assumptions = [...(mm.assumptions ?? []), ...ansT.map((t) => ({ id: uid(), t, rel: "D" as const }))]; });
     } catch (e) { setAiErr((e as Error).message); } finally { setAiBusy(false); }
   }
+  // scartare una proposta = registrare quella strada concreta come «non perseguibile», con motivo e data (resta visibile, non entra nei calcoli)
+  /** Adatta la decisione alla premessa: conti (importi vuoti o stime AI) e strade (condizioni, rischi, conseguenze mancanti). Due chiamate. */
+  async function runAdatta() {
+    setAiBusy(true); setAiErr(""); setAdattaMsg("");
+    try {
+      const before = d!.model;
+      const xc = await ai<AiConti>("conti", contiPayload(d!, eco));
+      let model = contiFromAi(before, xc).model;
+      const xs = await ai<AiStrade>("strade", compact({ ...d!, model }, undefined, { eco, ctx: ctxStr }));
+      model = mergeStrade(model, xs).model;
+      const cnt = (mm: Model) => ({ v: [...(mm.oggi ?? []), ...mm.options.flatMap((o) => o.conti ?? [])].filter((l) => l.v != null).length,
+        c: mm.options.reduce((a, o) => a + (o.cond?.length ?? 0), 0), r: mm.options.reduce((a, o) => a + (o.risks?.length ?? 0), 0), t: mm.options.reduce((a, o) => a + (o.tl?.length ?? 0), 0) });
+      const b = cnt(before), a = cnt(model);
+      upd({ ...d!, model });
+      setCq(contiFromAi(before, xc).questions);
+      setAdattaMsg(`Adattata: ${a.v - b.v} importi, ${a.c - b.c} condizioni, ${a.r - b.r} rischi, ${a.t - b.t} conseguenze in più. Controlla le voci marcate AI.`);
+    } catch (e) { setAiErr((e as Error).message); } finally { setAiBusy(false); }
+  }
   function dropPlan(kd: PlanKind, name: string, why: string) {
-    setM((mm) => { mm.scartate = [...(mm.scartate ?? []).filter((x) => x.kd !== kd), { kd, name, ...(why.trim() ? { why: why.trim() } : {}), at: new Date().toISOString() }]; });
+    setM((mm) => { mm.options.push({ id: uid(), name, kd, s: {}, st: "np", stAt: new Date().toISOString(), ...(why.trim() ? { stWhy: why.trim() } : {}) }); });
   }
   async function newDecision(name: string) {
     const nid = await ws.createDecision({ name, descr: `Nata da «${d!.name}».` });
@@ -508,8 +543,10 @@ export default function DecisionPage() {
           <div style={{ gridColumn: "1/-1" }}><label className="f">La situazione in breve (premessa)</label><textarea style={{ minHeight: 90 }} value={d.descr ?? ""} onChange={(e) => upd({ ...d, descr: e.target.value })} />
             <div className="row" style={{ gap: 8, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
               <button className="btn sm" disabled={aiBusy} onClick={() => runPremessa(false)}><Sparkles size={14} /> {aiBusy ? "L'Analista sta leggendo…" : "Riscrivi con i dati emersi"}</button>
+              <button className="btn sm" disabled={aiBusy} onClick={runAdatta} title="Porta premessa e risposte dentro conti, strade, condizioni e rischi"><RefreshCw size={14} /> Adatta la decisione</button>
               <label className="row" style={{ gap: 6, fontSize: 13 }}><input type="checkbox" checked={eco} onChange={(e) => setCeco(e.target.checked)} /> includi le cifre</label>
               {aiErr && more && <span className="err">{aiErr}</span>}
+              {adattaMsg && <span className="pill ok">{adattaMsg}</span>}
               {m.ai?.premPrev != null && <button className="btn ghost sm" onClick={() => setD2((dd) => ({ ...dd, descr: dd.model.ai?.premPrev ?? dd.descr, model: { ...dd.model, ai: { ...dd.model.ai, premPrev: undefined } } }))}>Torna alla versione precedente</button>}
             </div>
             {prem && (
@@ -518,7 +555,7 @@ export default function DecisionPage() {
                 <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{prem.p}</p>
                 {prem.f.length > 0 && <div><small className="muted">Fatti emersi</small><ul className="clean">{prem.f.map((x) => <li key={x}>{x}</li>)}</ul></div>}
                 <div className="row" style={{ gap: 6 }}>
-                  <button className="btn sm pri" onClick={() => { setD2((dd) => ({ ...dd, descr: prem.p, model: { ...dd.model, ai: { ...dd.model.ai, premPrev: dd.descr ?? "" } } })); setPrem(null); }}>Usa questa premessa</button>
+                  <button className="btn sm pri" onClick={() => { setD2((dd) => ({ ...dd, descr: prem.p, model: { ...dd.model, ai: { ...dd.model.ai, premPrev: dd.descr ?? "" } } })); setPrem(null); setAdattaMsg("Premessa aggiornata: ora puoi adattare la decisione"); }}>Usa questa premessa</button>
                   <button className="btn ghost sm" onClick={() => setPrem(null)}>Scarta</button>
                 </div>
                 {prem.q.length > 0 && (
@@ -561,17 +598,22 @@ export default function DecisionPage() {
             </div>
           )}
           {dilemma && <Dilemma d={dilemma} add={addPlan} drop={dropPlan} />}
-          {(m.scartate ?? []).length > 0 && (
+          {((m.scartate ?? []).length > 0 || m.options.some(isOut)) && (
             <div className="note" style={{ fontSize: 14 }}>
               <b>Strade considerate e scartate:</b>
-              <ul className="clean" style={{ margin: "4px 0 0" }}>{m.scartate!.map((x, k) => (
-                <li key={k}>{x.name}{x.why ? <> — <i>{x.why}</i></> : <span className="muted"> — nessun motivo indicato</span>} <button className="btn ghost sm" onClick={() => setM((mm) => { mm.scartate = (mm.scartate ?? []).filter((_, j) => j !== k); })}>Ripristina</button></li>
-              ))}</ul>
+              <ul className="clean" style={{ margin: "4px 0 0" }}>
+                {m.options.filter(isOut).map((x) => (
+                  <li key={x.id}>{x.name} <small className="muted">({OPT_ST[x.st!].toLowerCase()}{x.stAt ? `, ${new Date(x.stAt).toLocaleDateString("it-IT")}` : ""})</small>{x.stWhy ? <> — <i>{x.stWhy}</i></> : <span className="muted"> — nessun motivo indicato</span>} <button className="btn ghost sm" onClick={() => setM((mm) => { const y = opt(mm, x.id); y.st = "attiva"; delete y.stWhy; y.stAt = new Date().toISOString(); })}>Ripristina</button></li>
+                ))}
+                {(m.scartate ?? []).map((x, k) => (
+                  <li key={"l" + k}>{x.name}{x.why ? <> — <i>{x.why}</i></> : <span className="muted"> — nessun motivo indicato</span>} <button className="btn ghost sm" onClick={() => setM((mm) => { mm.scartate = (mm.scartate ?? []).filter((_, j) => j !== k); })}>Ripristina</button></li>
+                ))}
+              </ul>
             </div>
           )}
           <div className="grid g3">
             {m.options.map((o, i) => (
-              <div key={o.id} className="card stack">
+              <div key={o.id} className={`card stack ${isOut(o) ? "optout" : ""}`}>
                 <div className="row between" style={{ flexWrap: "nowrap" }}>
                   <span className="optbadge" style={{ background: OPC[i % OPC.length] }}>{String.fromCharCode(65 + i)}</span>
                   <select className="kdsel" aria-label="Tipo di strada" value={o.kd ?? "base"} onChange={(e) => setM((mm) => { opt(mm, o.id).kd = e.target.value as PlanKind; })}>
@@ -580,19 +622,27 @@ export default function DecisionPage() {
                   <button className="iconbtn" title="Elimina" onClick={() => confirm(`Eliminare «${o.name}»?`) && setM((mm) => { mm.options = mm.options.filter((x) => x.id !== o.id); })}><Trash2 size={15} /></button>
                 </div>
                 <input value={o.name} placeholder="Nome dell'alternativa" onChange={(e) => setM((mm) => { opt(mm, o.id).name = e.target.value; })} style={{ fontWeight: 600 }} />
+                <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                  <select aria-label="Stato della strada" className="stsel" value={o.st ?? "attiva"} onChange={(e) => setM((mm) => { const x = opt(mm, o.id); x.st = e.target.value as OptState; x.stAt = new Date().toISOString(); if (!isOut(x)) delete x.stWhy; })}>
+                    {(Object.keys(OPT_ST) as OptState[]).map((k) => <option key={k} value={k}>{OPT_ST[k]}</option>)}
+                  </select>
+                  {res.rows.find((r) => r.id === o.id)?.excluded.some((w) => !/^(non perseguibile|abbandonata)/.test(w)) && <span className="pill bad" title={res.rows.find((r) => r.id === o.id)!.excluded.join("; ")}>esclusa da vincoli</span>}
+                  {o.stAt && o.st && o.st !== "attiva" && <small className="muted">dal {new Date(o.stAt).toLocaleDateString("it-IT")}</small>}
+                </div>
+                {isOut(o) && <input aria-label="Motivo" placeholder="Perché? (es. già so che l'azienda non offre alloggio)" value={o.stWhy ?? ""} onChange={(e) => setM((mm) => { opt(mm, o.id).stWhy = e.target.value; })} />}
                 <textarea style={{ minHeight: 60 }} placeholder="In due parole: cosa comporta?" value={o.note ?? ""} onChange={(e) => setM((mm) => { opt(mm, o.id).note = e.target.value; })} />
                 <PcList kind="pro" items={o.pro ?? []} onChange={(v) => setM((mm) => { opt(mm, o.id).pro = v; })} />
                 <PcList kind="con" items={o.con ?? []} onChange={(v) => setM((mm) => { opt(mm, o.id).con = v; })} />
               </div>
             ))}
-            {m.options.length < 5 && (
+            {m.options.filter((o) => !isOut(o)).length < 5 && (
               <div className="card stack" style={{ borderStyle: "dashed", justifyContent: "center" }}>
                 <button className="btn" onClick={() => setM((mm) => { mm.options.push({ id: uid(), name: "", s: {} }); })}><Plus size={16} /> Aggiungi alternativa</button>
                 {!m.options.some(isStatusQuo) && <button className="btn ghost sm" onClick={() => setM((mm) => { mm.options.push({ id: uid(), name: "Lasciare tutto com'è", s: {} }); })}>+ Lasciare tutto com&apos;è</button>}
               </div>
             )}
           </div>
-          {m.options.length >= 5 && <small>Massimo 5 strade: oltre, il confronto diventa confuso.</small>}
+          {m.options.filter((o) => !isOut(o)).length >= 5 && <small>Massimo 5 strade attive: oltre, il confronto diventa confuso. Puoi segnarne una come non perseguibile.</small>}
           {aiStradeBox}
         </section>
       )}
@@ -623,7 +673,7 @@ export default function DecisionPage() {
           </div>
           {aiStradeBox}
           <div className="stack">
-            {m.options.map((o, i) => <Conseq key={o.id} o={o} i={i} setM={setM} onNewDecision={newDecision} base={ws.profile.resources} rules={ws.profile.rules} phs={phs} ars={ars} />)}
+            {act.map((o, i) => <Conseq key={o.id} o={o} i={i} setM={setM} onNewDecision={newDecision} base={ws.profile.resources} rules={ws.profile.rules} phs={phs} ars={ars} />)}
           </div>
         </section>
       )}
@@ -727,7 +777,7 @@ export default function DecisionPage() {
                     <h3 style={{ margin: 0 }}>{c.name}</h3>
                     <small>{c.kind === "num" ? `${c.unit ?? ""} · pessimo ${c.worst ?? "?"} → ottimo ${c.best ?? "?"}` : c.kind === "g" ? "Giudizio" : "Punteggio 0-100"}</small>
                   </div>
-                  {m.options.map((o, i) => {
+                  {act.map((o, i) => {
                     const val = c.kind === "num" ? o.raw?.[c.id] : o.s?.[c.id];
                     const meta = o.m?.[c.id] ?? {};
                     const nk = `${o.id}.${c.id}`;
@@ -818,7 +868,7 @@ export default function DecisionPage() {
                 {aiErr && <div className="err">{aiErr}</div>}
               </div>
             </div>
-            {m.options.map((o, i) => {
+            {act.map((o, i) => {
               const cd = contiDelta(o, m.oggi ?? []);
               return (
                 <details key={o.id} className="contiopt" open={!!o.conti?.length}>
@@ -844,7 +894,7 @@ export default function DecisionPage() {
           </div>
           <Hint>Indica le <b>differenze rispetto a oggi</b> per ogni alternativa. Così Decision OS calcola quanti mesi reggi e cosa succede se va peggio del previsto. Per il mensile: <b>+</b> se a fine mese ti resta di più, <b>−</b> se ti resta di meno.</Hint>
           <div className="grid g3" style={{ alignItems: "start" }}>
-            {m.options.map((o, i) => {
+            {act.map((o, i) => {
               const c0 = imp(o, "cash0"), cm = imp(o, "cash_m"), h = imp(o, "hours_w");
               const cmv = cm ? (Array.isArray(cm.v) ? cm.v : [cm.v, cm.v, cm.v]) : [null, null, null];
               const sim = applyCombo([o.id], new Map([[o.id, o]]), [], R, ws.profile.rules, 12, 1);
@@ -962,11 +1012,31 @@ export default function DecisionPage() {
             {ready.failed.length > 0 && <div className="note bad">Non soddisfatte: {ready.failed.map((c) => c.t).join("; ")}.</div>}
             <small>Decision OS non sceglie al posto tuo: ti dice a quali condizioni una strada regge e cosa verificare prima.</small>
           </div>
+          <div className="card stack waitc">
+            <h3 style={{ margin: 0 }}><Hourglass size={18} /> Il costo del non decidere</h3>
+            {ready.wait?.left != null && <p style={{ margin: 0 }}>Hai <b>{ready.wait.left}</b> {ready.wait.left === 1 ? "giorno" : "giorni"}{ready.wait.exp[0] && ready.wait.exp[0].days === ready.wait.left ? <>: «{ready.wait.exp[0].name}» scade</> : d.due ? <> fino alla data che ti sei dato</> : null}.</p>}
+            <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <small>Aspettando perdi circa</small><Num value={m.wait?.m ?? null} w={86} suffix="€" onChange={(v) => setM((mm) => { mm.wait = { ...mm.wait, m: v == null ? null : Math.abs(v) }; })} /><small>al mese</small>
+              <input aria-label="Cosa succede se aspetti" style={{ flex: "1 1 260px" }} placeholder="Cosa succede se aspetti? (es. la NASpI si consuma, l'offerta può saltare)" value={m.wait?.t ?? ""} onChange={(e) => setM((mm) => { mm.wait = { ...mm.wait, t: e.target.value }; })} />
+            </div>
+            {ready.wait && ready.wait.m > 0 && <small>Aspettare 7 giorni ≈ <b>{eur(ready.wait.c7)}</b> · 30 giorni ≈ <b>{eur(ready.wait.c30)}</b> · 90 giorni ≈ <b>{eur(ready.wait.c90)}</b>.</small>}
+            {ready.wait?.exp.map((x) => <small key={x.id} className="err">«{x.name}» scade tra {x.days} {x.days === 1 ? "giorno" : "giorni"}: dopo esce dalle strade possibili.</small>)}
+            {ready.state === "non_pronta" && ready.wait && (ready.wait.m > 0 || ready.wait.exp.length > 0) && <div className="note warn" style={{ fontSize: 14 }}>Non sei ancora pronto, ma aspettare ha un costo: fai prima le verifiche che valgono la pena e che fai in tempo, poi decidi anche senza le altre.</div>}
+          </div>
           {ready.open.length > 0 && (
             <div className="card stack plan">
               <h3 style={{ margin: 0 }}><ListOrdered size={18} /> Prima di rispondere, in quest&apos;ordine</h3>
               <ol className="plansteps">
-                {ready.open.map((c) => <li key={c.key}><b>{c.how}</b>{c.gate && <small className="stop">{stopText(ready)}</small>}</li>)}
+                {ready.open.map((c) => <li key={c.key}><b>{c.how}</b>{c.gate && <small className="stop">{stopText(ready)}</small>}
+                  {c.voi && (
+                    <div className="voi">
+                      <small>Può ribaltare la scelta (forza {c.voi.power}%). Quanto costa saperlo?</small>
+                      <span className="seg sm" role="group" aria-label={`Costo per sapere: ${c.how}`}>{(["facile", "medio", "difficile"] as const).map((v) => <button key={v} className={c.voi!.c === v ? "on" : ""} onClick={() => setVoi(c.voi!.key, { c: v })}>{v[0].toUpperCase() + v.slice(1)}</button>)}</span>
+                      <span className="row" style={{ gap: 4, alignItems: "center" }}><Num value={c.voi.days ?? null} w={50} suffix="giorni" onChange={(v) => setVoi(c.voi!.key, { days: v == null ? null : Math.abs(v) })} /></span>
+                      {c.voi.worth !== "?" && <span className={`pill ${c.voi.worth === "si" ? "ok" : c.voi.worth === "no" ? "bad" : "warn"}`}>{c.voi.late ? "non fai in tempo: decidi senza" : c.voi.worth === "si" ? "vale la pena" : c.voi.worth === "no" ? "non vale la pena" : "forse"}</span>}
+                    </div>
+                  )}
+                </li>)}
                 <li><b>Poi torna qui:</b> Decision OS ricalcola con i nuovi dati e ti dice se la decisione è pronta.</li>
               </ol>
             </div>
@@ -1003,7 +1073,7 @@ export default function DecisionPage() {
               <h3 style={{ margin: 0 }}><ShieldAlert size={18} /> Rischi a confronto</h3>
               <div className="tablewrap">
                 <table className="t num riskt">
-                  <thead><tr><th>Strada</th><th>Rischi</th><th>Rischio peggiore, se succede</th><th>Costo pesato</th><th>Oltre i tuoi limiti</th></tr></thead>
+                  <thead><tr><th>Strada</th><th>Rischi</th><th>Rischio peggiore, se succede</th><th>Costo pesato</th><th>Oltre i tuoi limiti</th><th>Tornare indietro</th></tr></thead>
                   <tbody>{rsum.map((x) => (
                     <tr key={x.id} className={ready.lead?.id === x.id ? "lead" : ""}>
                       <td><strong>{x.name}</strong></td>
@@ -1011,6 +1081,7 @@ export default function DecisionPage() {
                       <td>{x.worst ? <>{x.worst.t}{x.worst.tot ? <> · <b>{eur(x.worst.tot)}</b></> : null}</> : "—"}</td>
                       <td>{x.n ? eur(x.pesato) : "—"}</td>
                       <td>{x.rompe ? <span className="pill bad">{x.rompe}</span> : x.n ? <span className="pill ok">no</span> : "—"}</td>
+                      <td>{(() => { const rv = revOf(m.options.find((o) => o.id === x.id)!); return rv ? <span className={`pill ${rv.irr ? "bad" : rv.rev ? "ok" : "warn"}`} title={rv.text}>{rv.irr ? "difficile" : rv.rev ? "facile" : "in parte"}</span> : <span className="muted">—</span>; })()}</td>
                     </tr>
                   ))}</tbody>
                 </table>
@@ -1106,6 +1177,7 @@ export default function DecisionPage() {
                   <>
                     <ul className="clean">{contro.p.map((x, i) => <li key={i}>{x}</li>)}</ul>
                     {contro.c && <div className="note"><b>{contro.c}</b></div>}
+                    <small className="aisrc"><span className="aitag">AI</span> Argomenti dell&apos;AI, non fonti verificate.</small>
                     <div className="row between">
                       <small>{contro.h === aiHash ? `Generato il ${new Date(contro.at).toLocaleDateString("it-IT")}` : <span style={{ color: "#a86a10" }}>Hai cambiato i dati da allora: il parere potrebbe non essere più valido.</span>}</small>
                       <button className="btn sm" disabled={aiBusy} onClick={runContro}><RefreshCw size={14} /> {aiBusy ? "…" : "Rifai"}</button>

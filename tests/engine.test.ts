@@ -441,9 +441,9 @@ console.log("engine: 10/10 ok");
   const sc: Decision = { id: "s", name: "s", status: "aperta", imp: 1, model: { criteria: [{ id: "p", name: "P", w: 0, imp: 3, kind: "g" }], constraints: [],
     options: [{ id: "a", name: "Accettare proposta Ibiza", s: { p: 75 }, m: { p: { rel: "F" } } }, { id: "b", name: "Resto dove sono", s: { p: 25 }, m: { p: { rel: "F" } } }] } };
   assert.equal(E.falseDilemma(sc)!.sugg.length, 3);
-  sc.model.scartate = [{ kd: "cond", name: "Ibiza solo a condizioni", why: "già so che l'azienda non offre alloggio", at: "2026-10-11" }];
+  sc.model.scartate = [{ kd: "cond", name: "Accettare proposta Ibiza, solo a condizioni", why: "già so che l'azienda non offre alloggio", at: "2026-10-11" }];
   assert.ok(E.falseDilemma(sc)!.sugg.every((x) => x.kd !== "cond"));
-  sc.model.scartate.push({ kd: "prova", name: "Ibiza in prova", at: "2026-10-11" });
+  sc.model.scartate.push({ kd: "prova", name: "Accettare proposta Ibiza in prova o in piccolo, con verifica e uscita", at: "2026-10-11" });
   assert.equal(E.falseDilemma(sc), null);   // resta una sola proposta: le altre le hai considerate tu
   assert.ok(!E.readiness(sc, E.analyzeDecision(sc)).open.some((c) => c.kind === "dilemma"));
   console.log("engine: strade scartate come non perseguibili ok");
@@ -499,4 +499,48 @@ console.log("engine: 10/10 ok");
   assert.ok(!/\d{3}/.test(pp.replace(/"k":"[a-z]+"/g, "")), pp);
   assert.ok(JSON.stringify(AI.premessaPayload(pd, true)).includes("2400"));
   console.log("ai: premessa dai dati emersi ok");
+  // 48. frase sulle basi: non più rovesciata
+  const bz = E.readiness(structuredClone((await import("../lib/demo.ts")).exampleDecision), E.analyzeDecision(structuredClone((await import("../lib/demo.ts")).exampleDecision)), {}, []).open.find((c) => c.kind === "basi")!;
+  assert.ok(/^Solo il \d+% del punteggio di .+ poggia su dati certi o dichiarati; il \d+% deriva da stime o valori senza fonte$/.test(bz.t), bz.t);
+  // 49. stato delle strade: «non perseguibile» resta visibile, esce dai calcoli; lo scarto vale per la strada concreta, non per il tipo
+  const st: Decision = { id: "st", name: "st", status: "aperta", imp: 1, model: { criteria: [{ id: "p", name: "P", w: 0, imp: 3, kind: "g" }], constraints: [],
+    options: [{ id: "a", name: "Accetto", s: { p: 100 }, m: { p: { rel: "F" } } }, { id: "b", name: "Resto fermo", kd: "sq", s: { p: 25 }, m: { p: { rel: "F" } } },
+      { id: "c", name: "Accetto, solo a condizioni", kd: "cond", s: { p: 90 }, m: { p: { rel: "F" } }, st: "np", stWhy: "nessun alloggio" }] } };
+  const sr = E.analyzeDecision(st);
+  assert.ok(sr.rows.find((x) => x.id === "c")!.excluded[0] === "non perseguibile: nessun alloggio" && sr.rows[0].id === "a");
+  const sd = E.falseDilemma(st)!;
+  assert.ok(sd && !sd.sugg.some((x) => x.kd === "cond") && sd.sugg.some((x) => x.kd === "prova"), JSON.stringify(sd));   // quella strada concreta è stata considerata
+  st.model.options[0].name = "Accetto l'offerta di Milano";   // strada principale diversa: la sua versione condizionata non è mai stata valutata
+  assert.ok(E.falseDilemma(st)!.sugg.some((x) => x.kd === "cond"));
+  // 50. reversibilità: prima di poco ma irreversibile, alternativa reversibile vicina → da chiarire
+  const rvD: Decision = { id: "rv", name: "rv", status: "aperta", imp: 1, model: { criteria: [{ id: "p", name: "P", w: 0, imp: 3, kind: "g" }], constraints: [],
+    options: [{ id: "a", name: "Compro casa", s: { p: 100 }, m: { p: { rel: "F" } }, rev: { out: 15000, back: 24, lock: "alto" } },
+      { id: "b", name: "Affitto 2 anni", kd: "temp", s: { p: 100 }, m: { p: { rel: "F" } }, rev: { out: 500, back: 2, lock: "basso" } },
+      { id: "c", name: "Compro solo se mutuo sotto il 3%", kd: "cond", s: { p: 25 }, m: { p: { rel: "F" } } }, { id: "d", name: "Cerco altre zone", kd: "cerca", s: { p: 25 }, m: { p: { rel: "F" } } }] } };
+  rvD.model.options[1].s.p = 96;
+  rvD.model.criteria.push({ id: "q", name: "Q", w: 0, imp: 1, kind: "g" }); rvD.model.options.forEach((o) => { o.s.q = 50; (o.m ??= {}).q = { rel: "F" }; });
+  const rvR = E.readiness(rvD, E.analyzeDecision(rvD));
+  const rvc = rvR.open.find((c) => c.kind === "rev");
+  assert.ok(rvc && rvc.t.includes("Compro casa") && rvc.t.includes("Affitto 2 anni") && rvc.grp === "chiarire", JSON.stringify(rvR.open.map((c) => c.t)));
+  assert.ok(E.revOf(rvD.model.options[0])!.irr && E.revOf(rvD.model.options[1])!.rev);
+  // 51. costo del non decidere e scadenze
+  const in5 = new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10);
+  const wD: Decision = { ...rvD, due: new Date(Date.now() + 20 * 86400000).toISOString().slice(0, 10), model: { ...rvD.model, wait: { m: 1100, t: "la NASpI si consuma" }, options: rvD.model.options.map((o, i) => (i === 0 ? { ...o, exp: in5 } : o)) } };
+  const wv = E.waitView(wD);
+  assert.deepEqual([wv.left, wv.c7, wv.c30, wv.c90, wv.exp[0].name], [5, 257, 1100, 3300, "Compro casa"]);
+  const exD2w: Decision = { ...wD, model: { ...wD.model, options: wD.model.options.map((o, i) => (i === 0 ? { ...o, exp: "2020-01-01" } : o)) } };
+  assert.ok(E.analyzeDecision(exD2w).rows.find((x) => x.id === "a")!.excluded.some((w) => w.startsWith("scaduta")));
+  // 52. valore dell'informazione: forza × costo; troppo lento rispetto alla scadenza = decidi senza
+  assert.equal(E.voiOf(wD, "k", 0.3, wv).worth, "?");
+  wD.model.voi = { k: { c: "facile", days: 2 }, j: { c: "difficile", days: 1 }, z: { c: "medio", days: 14 } };
+  assert.equal(E.voiOf(wD, "k", 0.3, wv).worth, "si");
+  assert.equal(E.voiOf(wD, "j", 0.05, wv).worth, "no");
+  const late = E.voiOf(wD, "z", 0.4, wv);
+  assert.ok(late.late && late.worth === "no");
+  console.log("engine: stato strade, reversibilità, costo dell'attesa, valore dell'informazione ok");
+  // 53. adatta: le stime AI non toccate si aggiornano, i tuoi numeri no
+  const ad = AI.contiFromAi({ criteria: [], constraints: [], options: [{ id: "i", name: "Ibiza", s: {}, conti: [{ id: "s1", t: "Stipendio netto", k: "e", v: 2400, src: "ai", f: "S" }, { id: "s2", t: "Affitto", k: "s", v: 1300 }] }] },
+    { s: [{ a: "Ibiza", l: [{ t: "Stipendio netto", k: "e", v: 2050, lo: 2000, hi: 2100, f: "D" }, { t: "Affitto", k: "s", v: 1500 }] }] }).model.options[0].conti!;
+  assert.deepEqual([ad[0].v, ad[0].lo, ad[0].hi, ad[0].f, ad[1].v], [2050, 2000, 2100, "D", 1300]);
+  console.log("ai: adatta la decisione senza toccare i tuoi numeri ok");
 }

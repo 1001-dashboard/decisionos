@@ -40,6 +40,7 @@ export function compact(d: Decision, r: DecResult | undefined, opts: { eco: bool
       })),
       y: Object.fromEntries(Object.entries(o.m ?? {}).filter(([, x]) => x.why).map(([k, x]) => [m.criteria.find((c) => c.id === k)?.name ?? k, `${tx(x.why)} [${x.rel ?? "D"}]`])),
       ...(o.kd && o.kd !== "base" ? { kd: o.kd } : {}),
+      ...(o.st && o.st !== "attiva" ? { st: o.st === "np" ? `non perseguibile${o.stWhy ? ": " + tx(o.stWhy) : ""}` : o.st } : {}),
       ...(o.cond?.length ? { cd: o.cond.map((c) => `${tx(c.t)} [${c.st}${c.gate ? ",vincolante" : ""}]`) } : {}),
       ...((o.pro?.length || o.con?.length) ? { pc: [(o.pro ?? []).map((x) => tx(x)), (o.con ?? []).map((x) => tx(x))] } : {}),
       ...(opts.eco ? { im: (o.impacts ?? []).map((i) => [i.r, i.v, i.src === "ai" ? "stima AI" : ""]) } : {}),
@@ -105,9 +106,10 @@ export function mergeStrade(m: Model, x: AiStrade & { ph?: unknown; ar?: unknown
     const ex = mm.options.find((o) => norm(o.name) === norm(a.n));
     if (ex) {
       if (!ex.tl?.length && pl.tl) ex.tl = pl.tl;
-      if (!ex.next?.length && pl.next) ex.next = pl.next;
-      if (!ex.cond?.length && pl.cond) ex.cond = pl.cond;
-      if (!ex.risks?.length && pl.risks) ex.risks = pl.risks;
+      const nx = new Set((ex.next ?? []).map(norm)), nc = new Set((ex.cond ?? []).map((c) => norm(c.t))), nr = new Set((ex.risks ?? []).map((r) => norm(r.t)));
+      ex.next = [...(ex.next ?? []), ...(pl.next ?? []).filter((x) => !nx.has(norm(x)))].slice(0, 6);
+      ex.cond = [...(ex.cond ?? []), ...(pl.cond ?? []).filter((c) => !nc.has(norm(c.t)))].slice(0, 7);
+      ex.risks = [...(ex.risks ?? []), ...(pl.risks ?? []).filter((r) => !nr.has(norm(r.t)))].slice(0, 6);
       if (!ex.kd) ex.kd = pl.kd;
     } else if (mm.options.length < 6) {
       const sh = (l?: string[]) => arr<string>(l).filter((t) => typeof t === "string" && t.trim()).slice(0, 4).map((t) => t.trim().slice(0, 140));
@@ -197,7 +199,8 @@ const toLine = (l: AiLine): Line | null => {
 export function contiFromAi(m: Model, x: AiConti): { model: Model; questions: string[] } {
   const mm: Model = structuredClone(m);
   // riempie solo gli importi vuoti: mai sovrascrivere un numero che c'è già
-  const fill = (dst: Line, src: Line) => { if (dst.v == null && src.v != null) { dst.v = src.v; dst.lo ??= src.lo; dst.hi ??= src.hi; dst.f = src.f; } };
+  // riempie gli importi vuoti e aggiorna le stime dell'AI che non hai toccato (src «ai»): i tuoi numeri non si toccano mai
+  const fill = (dst: Line, src: Line) => { if (src.v != null && (dst.v == null || dst.src === "ai")) { dst.v = src.v; dst.lo = src.lo ?? dst.lo; dst.hi = src.hi ?? dst.hi; dst.f = src.f; } };
   const ai0 = arr<AiLine>(x.o).map(toLine).filter((l): l is Line => !!l);
   for (const l of ai0) { const ex = (mm.oggi ?? []).find((y) => norm(y.t) === norm(l.t)); if (ex) fill(ex, l); }
   const have = new Set((mm.oggi ?? []).map((l) => norm(l.t)));
@@ -225,7 +228,8 @@ export function contiPayload(d: Decision, eco: boolean, answers: string[] = []) 
   const tx = (t?: string) => (t == null ? undefined : eco ? t : redactMoney(t));
   const ln = (l: Line) => (eco && l.v != null ? `${l.t} ${l.k === "e" ? "+" : "-"}${l.v}${l.u ? " una tantum" : ""}` : `${l.t} (${l.k === "e" ? "entrata" : "spesa"})`);
   return {
-    t: tx(d.descr), a: d.model.options.map((o) => o.name),
+    t: tx(d.descr), a: d.model.options.filter((o) => o.st !== "np" && o.st !== "abbandonata").map((o) => o.name),
+    ...(d.model.assumptions?.length ? { i: d.model.assumptions.map((a) => tx(a.t)) } : {}),
     ...(d.model.oggi?.length ? { o: d.model.oggi.map(ln) } : {}),
     ...(answers.length ? { r: answers.map((a) => tx(a)) } : {}),
     ...(eco ? { eco: true } : { privacy: "importi oscurati: proponi solo le voci, v null" }),

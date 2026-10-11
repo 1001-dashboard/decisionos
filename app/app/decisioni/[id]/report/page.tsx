@@ -7,7 +7,7 @@ import { useWs } from "@/components/Workspace";
 import { ScoreBars, LineChart, Legend, PAL } from "@/components/charts";
 import {
   analyzeDecision, biasChecks, conclusive, cashBreakpoint, cashSeries, crossEffects, eur, fmt, hashOf, normalize, solidity, tradeoff, turningPoints,
-  LEVELS, SCEN, type Scen, untestedText, infoValue, readiness, focus, stopText, fallbackText, oddScenario, invertedScenario, contiDelta, saldo, riskViews, riskSummary, phasesOf, snapPhase, customRes, PLAN_L } from "@/lib/engine";
+  LEVELS, SCEN, type Scen, untestedText, infoValue, readiness, focus, stopText, fallbackText, oddScenario, invertedScenario, contiDelta, saldo, isOut, OPT_ST, riskViews, riskSummary, phasesOf, snapPhase, customRes, PLAN_L } from "@/lib/engine";
 import { actionPlan, briefing, consequences, projection, valueText, HZ } from "@/lib/narrative";
 import { compact } from "@/lib/ai";
 import { PRI } from "@/lib/priorities";
@@ -118,6 +118,7 @@ export default function Report() {
             {rd.dilemma && <><dt>Strade mancanti</dt><dd>{rd.dilemma.msg} Da considerare: {rd.dilemma.sugg.map((x) => `«${x.name}»`).join(", ")}.</dd></>}
             {foc && foc.calm.length > 0 && <><dt>Non cambia la scelta</dt><dd>{foc.calm.map((x) => `«${x.critName}» di ${x.optName}`).join(", ")}: qualunque valore plausibile abbiano.</dd></>}
             {rd.failed.length > 0 && <><dt>Non soddisfatte</dt><dd>{rd.failed.map((c) => c.t).join("; ")}.</dd></>}
+            {rd.wait && (rd.wait.m > 0 || rd.wait.exp.length > 0 || rd.wait.left != null) && <><dt>Costo dell&apos;attesa</dt><dd>{rd.wait.left != null ? `Restano ${rd.wait.left} giorni. ` : ""}{rd.wait.m > 0 ? `Aspettare costa circa ${eur(rd.wait.c30)} al mese (${eur(rd.wait.c7)} a 7 giorni, ${eur(rd.wait.c90)} a 90). ` : ""}{rd.wait.exp.map((x) => `«${x.name}» scade tra ${x.days} giorni. `).join("")}{rd.wait.t ?? ""}</dd></>}
             {rd.done.length > 0 && <><dt>Già verificate</dt><dd>{rd.done.map((c) => c.t).join("; ")}.</dd></>}
           </dl>
           <p className="rep-note">Questo report non decide al posto tuo: dice a quali condizioni una strada regge, cosa verificare prima e in che ordine. Il punteggio è solo una parte dell&apos;analisi (sezione «Il confronto»).</p>
@@ -133,7 +134,9 @@ export default function Report() {
             <div>
               <h3>Cosa stai decidendo</h3>
               <ul>{m.options.map((o) => <li key={o.id}><b>{o.name}</b>{o.note ? ` — ${o.note}` : ""}</li>)}</ul>
-              {(m.scartate ?? []).length > 0 && <><h3>Strade considerate e scartate</h3><ul>{m.scartate!.map((x, k) => <li key={k}>{x.name}{x.why ? ` — ${x.why}` : " — senza motivo indicato"}</li>)}</ul></>}
+              {((m.scartate ?? []).length > 0 || m.options.some(isOut)) && <><h3>Strade considerate e scartate</h3><ul>
+                {m.options.filter(isOut).map((x) => <li key={x.id}>{x.name} ({OPT_ST[x.st!].toLowerCase()}{x.stAt ? `, ${new Date(x.stAt).toLocaleDateString("it-IT")}` : ""}){x.stWhy ? ` — ${x.stWhy}` : " — senza motivo indicato"}</li>)}
+                {(m.scartate ?? []).map((x, k) => <li key={k}>{x.name}{x.why ? ` — ${x.why}` : " — senza motivo indicato"}</li>)}</ul></>}
             </div>
             <div>
               <h3>Il tuo punto di partenza</h3>

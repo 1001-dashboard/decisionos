@@ -1,6 +1,6 @@
 // Testi del report, calcolati dal motore (nessuna AI): cosa comporta ogni scelta, sintesi, piano d'azione.
 import {
-  applyCombo, crossEffects, eur, fmt, levelOf, normalize, riskViews, phasesOf, snapPhase, LEVELS, SCEN, RISK_W,
+  applyCombo, crossEffects, eur, fmt, levelOf, normalize, riskViews, phasesOf, snapPhase, revOf, daysTo, LEVELS, SCEN, RISK_W,
   type Crit, type Decision, type DecResult, type Dep, type Opt, type Resources, type Rule, type Scen,
 } from "./engine.ts";
 
@@ -146,6 +146,10 @@ export function briefing(dec: Decision, r: DecResult, o: Opt, base: Resources = 
   for (const x of (o.con ?? []).slice(0, 2)) if (!watch.some((w) => w.includes(x))) watch.push(`${x}.`);
   // a favore
   for (const x of (o.pro ?? []).slice(0, 3)) plus.push(`${x}.`);
+  const rvo = revOf(o);
+  if (rvo?.irr) watch.push(`Difficile tornare indietro: ${rvo.text}.`);
+  else if (rvo?.rev) plus.push(`Reversibile: ${rvo.text}.`);
+  if (o.exp) { const dd = daysTo(o.exp); if (dd >= 0) watch.push(`Scade tra ${dd} ${dd === 1 ? "giorno" : "giorni"} (${new Date(o.exp).toLocaleDateString("it-IT")}).`); }
   const cm = (o.impacts ?? []).find((i) => i.r === "cash_m");
   if (cm) {
     const v = Array.isArray(cm.v) ? cm.v : [cm.v, cm.v, cm.v];
