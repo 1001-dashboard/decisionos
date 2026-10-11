@@ -62,6 +62,8 @@ function PcList({ items, kind, onChange }: { items: string[]; kind: "pro" | "con
   );
 }
 
+const mid = (v: number | number[]) => (Array.isArray(v) ? v[v.length === 3 ? 1 : 0] : v);   // dati vecchi con intervallo su un campo a valore unico
+
 export default function DecisionPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -186,6 +188,7 @@ export default function DecisionPage() {
     if (!top) return { tone: "bad", t: "Nessuna alternativa rispetta i tuoi requisiti.", s: "Rivedi i requisiti minimi o cerca un'altra opzione." };
     const mg = res!.margin ?? 0;
     const gap = ok.length < 2 ? "è l'unica che rispetta i requisiti" : mg === 0 ? "è alla pari con " + ok[1].name : mg < 3 ? `è quasi alla pari con ${ok[1].name}` : mg < 10 ? `ha un vantaggio contenuto su ${ok[1].name}` : `ha un vantaggio netto su ${ok[1].name}`;
+    if (concl.pend) return { tone: "warn", t: "Classifica provvisoria: la prima non ha ancora superato un requisito obbligatorio.", s: `${concl.pend.name} è davanti, ma va verificato: ${concl.pend.req.join("; ")}. Se non lo rispetta viene scartata e la classifica cambia. Completa il dato al passo 3.` };
     if (ok.length < 2 && !provisional) return { tone: "ok", t: `Con le tue priorità di oggi prevale ${top.name}.`, s: `${top.name} è l'unica che rispetta tutti i tuoi requisiti.` };
     if (provisional && !concl.ok) return { tone: "warn", t: "Classifica provvisoria: i dati non bastano per una conclusione.", s: `Mancano ${st!.missing.length} valori (fino al ${concl.missW}% del peso). Con quei dati potrebbe prevalere ${concl.contenders.join(" oppure ")}. Completali al passo 3.` };
     if (provisional) return { tone: "warn", t: `Prevale ${top.name} anche nel caso peggiore dei dati mancanti.`, s: `Mancano ancora ${st!.missing.length} valori, ma nessuno di essi può ribaltare la classifica. Completali comunque per affinare il risultato.` };
@@ -447,7 +450,7 @@ export default function DecisionPage() {
                   )}
                   <div>
                     <label className="f">Spesa iniziale una tantum</label>
-                    <Num value={c0 ? -(c0.v as number) : null} suffix="€" onChange={(v) => setImpact(o.id, "cash0", v == null ? null : -Math.abs(v), c0?.tag)} />
+                    <Num value={c0 ? -mid(c0.v) : null} suffix="€" onChange={(v) => setImpact(o.id, "cash0", v == null ? null : -Math.abs(v), c0?.tag)} />
                     <small>Anticipo, acquisto, trasloco, iscrizione… scrivi l&apos;importo, senza segno.</small>
                     {c0 && <label className="row" style={{ gap: 6, fontSize: 13, marginTop: 4 }}><input type="checkbox" checked={!!c0.tag} onChange={(e) => setImpact(o.id, "cash0", c0.v, e.target.checked ? "spesa-condivisa" : undefined)} /> Spesa condivisa con altre decisioni (contata una volta sola)</label>}
                   </div>
@@ -460,7 +463,7 @@ export default function DecisionPage() {
                   </div>
                   <div>
                     <label className="f">Ore a settimana che richiede in più</label>
-                    <Num value={h ? -(h.v as number) : null} suffix="ore" onChange={(v) => setImpact(o.id, "hours_w", v == null ? null : -v)} />
+                    <Num value={h ? -mid(h.v) : null} suffix="ore" onChange={(v) => setImpact(o.id, "hours_w", v == null ? null : -v)} />
                   </div>
                   {(c0 || cm) && (
                     <div className="note" style={{ fontSize: 13 }}>

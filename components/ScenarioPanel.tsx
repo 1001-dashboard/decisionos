@@ -17,6 +17,11 @@ export default function ScenarioPanel({ decs, deps, resources, rules, h0 = 24, m
     return combos(decs, res, deps, resources, rules, h);
   }, [decs, deps, resources, rules, h]);
   const ok = plans.filter((p) => !p.excluded.length).slice(0, max);
+  // opzioni con importi proposti dall'AI e non ancora confermati
+  const aiOpt = useMemo(() => new Set(decs.flatMap((d) => d.model.options.filter((o) => (o.impacts ?? []).some((i) => i.src === "ai")).map((o) => o.id))), [decs]);
+  const isAi = (p: { combo: string[] }) => p.combo.some((id) => aiOpt.has(id));
+  const T = <span className="aitag" title="Importi stimati dall'AI, non confermati">AI</span>;
+  const anyAi = plans.slice(0, 12).some(isAi);
   const cashRule = rules.find((r) => r.r === "cash_end" && r.min != null);
   if (!plans.length) return <div className="empty">Servono decisioni con alternative ammissibili e impatti sulle risorse.</div>;
   return (
@@ -27,7 +32,7 @@ export default function ScenarioPanel({ decs, deps, resources, rules, h0 = 24, m
       </div>
       {ok.length ? (
         <>
-          <Legend items={ok.map((p, i) => ({ name: p.names.join(" + "), color: PAL[i % PAL.length] }))} />
+          <Legend items={ok.map((p, i) => ({ name: p.names.join(" + ") + (isAi(p) ? " (stima AI)" : ""), color: PAL[i % PAL.length] }))} />
           <LineChart
             series={ok.map((p, i) => ({ name: p.key, color: PAL[i % PAL.length], data: cashSeries(p.scen[sc].res, h) }))}
             threshold={cashRule ? { v: cashRule.min!, label: `${cashRule.name} ${eur(cashRule.min!)}` } : undefined}
@@ -44,10 +49,10 @@ export default function ScenarioPanel({ decs, deps, resources, rules, h0 = 24, m
               const need = (resources.cash0 ?? 0) - (r.cash0 ?? 0);
               return (
                 <tr key={p.key} style={{ opacity: p.excluded.length ? 0.55 : 1 }}>
-                  <td><strong>{p.names.join(" + ")}</strong></td>
-                  <td>{need > 0 ? eur(need) : "—"}</td>
-                  <td>{eur(r.cash_m ?? 0)}</td>
-                  <td>{eur(r.cash_end ?? 0)}</td>
+                  <td><strong>{p.names.join(" + ")}</strong>{isAi(p) && T}</td>
+                  <td>{need > 0 ? eur(need) : "—"}{isAi(p) && need > 0 && T}</td>
+                  <td>{eur(r.cash_m ?? 0)}{isAi(p) && T}</td>
+                  <td>{eur(r.cash_end ?? 0)}{isAi(p) && T}</td>
                   <td>{r.autonomia_mesi === Infinity ? "∞" : `${fmt(r.autonomia_mesi)} mesi`}</td>
                   <td>{fmt(r.hours_w ?? 0)} h</td>
                   <td>{p.excluded.length ? <span className="pill bad" title={p.excluded.join("; ")}>escluso</span>
@@ -59,6 +64,7 @@ export default function ScenarioPanel({ decs, deps, resources, rules, h0 = 24, m
           </tbody>
         </table>
       </div>
+      {anyAi && <div className="aiflag"><span>I piani marcati <span className="aitag">AI</span> usano importi stimati dall&apos;AI e non ancora confermati: verificali e confermali nel passo «Soldi e tempo» della decisione.</span></div>}
       <p className="muted" style={{ fontSize: 13 }}>Proiezione lineare a flusso costante. Gli scenari sono ipotesi esplicite, non probabilità.</p>
     </div>
   );

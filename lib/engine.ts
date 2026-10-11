@@ -481,23 +481,36 @@ export function biasChecks(dec: Decision, r: DecResult): Bias[] {
 const MONEY_NAME = /soldi|stipend|reddit|guadagn|margine|economic|risparm|costo|prezz|spes|affitt|rata|anticip|investiment|€|euro/i;
 export const isMoneyCrit = (c: Crit) => (c.kind === "num" && /€|eur/i.test(c.unit ?? "")) || (c.kind === "num" && MONEY_NAME.test(c.name));
 /** Oscura gli importi in € in un testo libero ("3.200 €", "€ 1.450", "2k euro", "1.500 euro al mese"). */
+// Importi senza simbolo: «RAL 40k», «stipendio 3200 al mese», «affitto 1450», «pago 900 di affitto».
+const MKW = "(?:ral|stipend\\w*|salari\\w*|reddit\\w*|nett[oi]|lord[oi]|guadagn\\w*|affitt\\w*|canone|rat[ae]|mutuo|prezz\\w*|cost[oi]|spes[ae]|anticip\\w*|cauzion\\w*|budget|risparm\\w*|debit\\w*|entrat[ae]|uscit[ae]|paga|compens\\w*|fattur\\w*|bonus|tredicesima|quattordicesima|bollett\\w*|investiment\\w*|prestit\\w*|finanziament\\w*)";
+const MNUM = "\\d+(?:[.,]\\d+)?\\s*(?:k|mila)\\b|\\d{1,3}(?:[.']\\d{3})+(?:,\\d+)?|\\d{3,}(?:[.,]\\d+)?";
+const R_AFTER = new RegExp(`(\\b${MKW}\\b[^\\d\\n;]{0,30}?)(?:${MNUM})`, "gi");
+const R_BEFORE = new RegExp(`(?:${MNUM})(?=(?:\\s+[^\\s\\d]+){0,4}?\\s+${MKW}\\b)`, "gi");
+const R_PERIOD = new RegExp(`(?:${MNUM})(?=\\s*(?:\\/\\s*mese|al mese|a mese|mensil\\w*|l'anno|all'anno|annu\\w*|\\/\\s*anno))`, "gi");
+
 export function redactMoney(t: string): string {
-  return t
-    .replace(/€\s*\d[\d.,']*(\s*(k|mila)\b)?/gi, "[cifra]")
-    .replace(/\d[\d.,']*(\s*(k|mila))?\s*(€|euro\b|eur\b)/gi, "[cifra]");
+  let x = t
+    .replace(/€\s*\d(?:[\d.,']*\d)?(\s*(k|mila)\b)?/gi, "[cifra]")
+    .replace(/\d(?:[\d.,']*\d)?(\s*(k|mila))?\s*(€|euro\b|eur\b)/gi, "[cifra]")
+    .replace(/\b\d+(?:[.,]\d+)?\s*k\b/gi, "[cifra]");
+  for (let i = 0; i < 3; i++) x = x.replace(R_AFTER, "$1[cifra]");   // più importi dopo la stessa parola
+  return x.replace(R_BEFORE, "[cifra]").replace(R_PERIOD, "[cifra]");
 }
 
 /* ---------- Conclusività: la prima resta prima anche nel caso peggiore dei dati mancanti? ---------- */
-export type Concl = { ok: boolean; missing: number; missW: number; contenders: string[] };
+export type Concl = { ok: boolean; missing: number; missW: number; contenders: string[]; pend?: { name: string; req: string[] } };
 export function conclusive(dec: Decision, r: DecResult): Concl {
   const ok = r.rows.filter((x) => !x.excluded.length);
   const missing = ok.reduce((a, x) => a + x.missing.length, 0);
   const tw = r.weightSum || 1;
   const nm = normalize(dec.model);
   const missW = Math.round(Math.max(0, ...ok.map((x) => nm.criteria.filter((c) => x.missing.includes(c.name)).reduce((a, c) => a + c.w, 0))) / tw * 100);
-  if (ok.length < 2 || !missing) return { ok: true, missing, missW, contenders: [] };
   const lo = (x: Row) => (x.range ? x.range[0] : x.score), hi = (x: Row) => (x.range ? x.range[1] : x.score);
+  if (!ok.length) return { ok: true, missing, missW, contenders: [] };
   const best = ok.reduce((a, b) => (lo(b) > lo(a) ? b : a));              // chi ha il caso peggiore più alto
+  // un requisito obbligatorio ancora da verificare può scartarla del tutto: non è una prima robusta
+  if (best.pending.length) return { ok: false, missing, missW, contenders: ok.map((x) => x.name), pend: { name: best.name, req: best.pending } };
+  if (ok.length < 2 || !missing) return { ok: true, missing, missW, contenders: [] };
   const rivals = ok.filter((x) => x.id !== best.id && hi(x) >= lo(best));  // chi potrebbe ancora superarla
   return { ok: !rivals.length, missing, missW, contenders: rivals.length ? [best.name, ...rivals.map((x) => x.name)] : [] };
 }

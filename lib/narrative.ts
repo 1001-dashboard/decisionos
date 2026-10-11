@@ -51,22 +51,28 @@ export function consequences(dec: Decision, r: DecResult, o: Opt, others: Decisi
   const imp = (k: string) => (o.impacts ?? []).find((i) => i.r === k);
   const c0 = imp("cash0"), cm = imp("cash_m"), hw = imp("hours_w");
   const ai = (o.impacts ?? []).some((x) => x.src === "ai");
+  const sa = (i?: { src?: string }) => (i?.src === "ai" ? " [stima AI, da verificare]" : "");
   if (ai) out.push({ tone: "warn", t: "Gli importi su soldi e tempo di questa alternativa sono stime dell'AI, non ancora confermate: le cifre qui sotto vanno verificate." });
   if (!c0 && !cm && !hw) out.push({ tone: "warn", t: "Non hai indicato effetti su soldi e tempo: le conseguenze economiche non sono valutate." });
   else {
-    if (c0) out.push({ tone: (c0.v as number) < 0 ? "warn" : "ok", t: (c0.v as number) < 0 ? `Ti costa subito ${eur(-(c0.v as number))}.` : `Ti porta subito ${eur(c0.v as number)}.` });
+    if (c0) {
+      const r3 = Array.isArray(c0.v) ? c0.v : [c0.v, c0.v, c0.v];
+      const n = r3[1];
+      const rg = r3[0] !== r3[2] ? ` (tra ${eur(Math.abs(r3[0]))} e ${eur(Math.abs(r3[2]))})` : "";
+      out.push({ tone: n < 0 ? "warn" : "ok", t: n < 0 ? `Ti costa subito ${eur(-n)}${rg}${sa(c0)}.` : `Ti porta subito ${eur(n)}${rg}${sa(c0)}.` });
+    }
     if (cm) {
       const v = Array.isArray(cm.v) ? cm.v : [cm.v, cm.v, cm.v];
       const sg = (n: number) => (n > 0 ? `+${eur(n)}` : eur(n));
-      out.push({ tone: v[1] >= 0 ? "ok" : "warn", t: v[0] === v[2] ? `Ogni mese, rispetto a oggi: ${sg(v[1])}.` : `Ogni mese, rispetto a oggi: ${sg(v[1])} nel caso probabile (da ${sg(v[0])} se va male a ${sg(v[2])} se va bene).` });
+      out.push({ tone: v[1] >= 0 ? "ok" : "warn", t: v[0] === v[2] ? `Ogni mese, rispetto a oggi: ${sg(v[1])}${sa(cm)}.` : `Ogni mese, rispetto a oggi: ${sg(v[1])} nel caso probabile (da ${sg(v[0])} se va male a ${sg(v[2])} se va bene)${sa(cm)}.` });
     }
     const p = projection(o, base, rules);
     const y1 = p.find((x) => x.h === 12)!.s, y2 = p.find((x) => x.h === 24)!.s;
     if (y1.centrale.res.cash_end != null)
-      out.push({ tone: y1.sfavorevole.viol.length ? "warn" : "ok", t: `Tra 12 mesi avresti ${eur(y1.centrale.res.cash_end)} di risparmi (${eur(y1.sfavorevole.res.cash_end ?? 0)} se va male); tra 24 mesi ${eur(y2.centrale.res.cash_end ?? 0)}.` });
+      out.push({ tone: y1.sfavorevole.viol.length ? "warn" : "ok", t: `Tra 12 mesi avresti ${eur(y1.centrale.res.cash_end)} di risparmi (${eur(y1.sfavorevole.res.cash_end ?? 0)} se va male); tra 24 mesi ${eur(y2.centrale.res.cash_end ?? 0)}${ai ? " [proiezione su stime AI]" : ""}.` });
     const au = y1.sfavorevole.res.autonomia_mesi;
     if (au != null && au !== Infinity) out.push({ tone: au < 6 ? "bad" : "warn", t: `Se va male consumi risparmi: reggi circa ${fmt(au)} mesi prima di esaurirli.` });
-    if (hw || base.hours_w) out.push({ tone: (y1.centrale.res.hours_w ?? 0) < 5 ? "warn" : "ok", t: `Ti restano ${fmt(y1.centrale.res.hours_w ?? 0)} ore libere a settimana.` });
+    if (hw || base.hours_w) out.push({ tone: (y1.centrale.res.hours_w ?? 0) < 5 ? "warn" : "ok", t: `Ti restano ${fmt(y1.centrale.res.hours_w ?? 0)} ore libere a settimana${sa(hw)}.` });
     const v24 = y2.sfavorevole.viol;
     if (v24.length) out.push({ tone: "bad", t: `Se va male, entro 24 mesi superi un tuo limite di sicurezza: ${v24.join("; ")}.` });
   }

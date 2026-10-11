@@ -94,8 +94,9 @@ export function Legend({ items }: { items: { name: string; color: string }[] }) 
   return (
     <div className="row" style={{ gap: 14, fontSize: 13 }}>
       {items.map((s) => (
-        <span key={s.name} className="row" style={{ gap: 6 }}>
-          <span style={{ width: 14, height: 3, background: s.color, borderRadius: 2, display: "inline-block" }} /> {s.name}
+        <span key={s.name} className="row" style={{ gap: 6, flexWrap: "nowrap", minWidth: 0, maxWidth: "100%" }}>
+          <span style={{ width: 14, height: 3, background: s.color, borderRadius: 2, display: "inline-block", flex: "none" }} />
+          <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{s.name}</span>
         </span>
       ))}
     </div>

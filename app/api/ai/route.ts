@@ -56,8 +56,8 @@ export async function POST(req: NextRequest) {
   const { mode, payload } = await req.json().catch(() => ({}));
   const p = P[mode as string];
   if (!p || !payload) return NextResponse.json({ e: "Richiesta non valida" }, { status: 400 });
-  const { data: prof } = await s.from("profiles").select("ai_share").eq("id", user.id).maybeSingle();
-  const eco = !!prof?.ai_share?.economia || payload?.eco === true;   // l'utente può abilitarle per una singola richiesta
+  // vale solo il consenso della richiesta corrente: la preferenza del profilo decide solo lo stato iniziale del toggle
+  const eco = payload?.eco === true;
   const clean = eco ? payload : scrub(payload);
   if (clean && typeof clean === "object") delete (clean as Record<string, unknown>).eco;
   const body = JSON.stringify(clean);

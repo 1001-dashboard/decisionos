@@ -96,6 +96,7 @@ export default function Report() {
             <>
               {concl.ok
                 ? <p className="big">Con le priorità indicate prevale <b>{top.name}</b>: {gap}.{missing ? ` Resta prima anche nel caso peggiore dei ${missing} valori mancanti.` : ""}</p>
+                : concl.pend ? <p className="big">Classifica provvisoria: <b>{concl.pend.name}</b> è davanti ma non ha ancora superato un requisito obbligatorio ({concl.pend.req.join("; ")}). Se non lo rispetta viene scartata e la classifica cambia.</p>
                 : <p className="big">Classifica provvisoria: i dati non bastano per una conclusione. Mancano {missing} valori (fino al {concl.missW}% del peso) e potrebbe prevalere {concl.contenders.join(" oppure ")}.</p>}
               <dl>
                 <dt>Perché</dt><dd>Pesano soprattutto {drivers.map((x) => `«${x}»`).join(" e ") || "—"}.</dd>
@@ -218,16 +219,16 @@ export default function Report() {
               {m.options.some((o) => (o.impacts ?? []).some((i) => i.src === "ai")) && <p className="rep-callout">Contiene importi stimati dall&apos;AI e non confermati ({m.options.filter((o) => (o.impacts ?? []).some((i) => i.src === "ai")).map((o) => `«${o.name}»`).join(", ")}): trattali come ipotesi da verificare.</p>}
               <table className="rt">
                 <thead><tr><th>Alternativa</th><th>Periodo</th>{SCEN.map((s) => <th key={s}>{SL[s]}</th>)}<th>Ore libere</th></tr></thead>
-                <tbody>{m.options.flatMap((o) => projection(o, R, rules).map((p, j) => (
+                <tbody>{m.options.flatMap((o) => { const ai = (o.impacts ?? []).some((i) => i.src === "ai"); const T = ai ? <span className="aitag" title="Importi stimati dall'AI, non confermati">AI</span> : null; return projection(o, R, rules).map((p, j) => (
                   <tr key={o.id + p.h} className={j === 0 ? "first" : ""}>
-                    <td>{j === 0 ? <b>{o.name}</b> : ""}</td><td>{p.h} mesi</td>
-                    {SCEN.map((s) => <td key={s} className={`num ${p.s[s].viol.length ? "neg" : ""}`}>{eur(p.s[s].res.cash_end ?? 0)}</td>)}
-                    <td className="num">{fmt(p.s.centrale.res.hours_w ?? 0)} h</td>
+                    <td>{j === 0 ? <><b>{o.name}</b>{T}</> : ""}</td><td>{p.h} mesi</td>
+                    {SCEN.map((s) => <td key={s} className={`num ${p.s[s].viol.length ? "neg" : ""}`}>{eur(p.s[s].res.cash_end ?? 0)}{T}</td>)}
+                    <td className="num">{fmt(p.s.centrale.res.hours_w ?? 0)} h{(o.impacts ?? []).some((i) => i.r === "hours_w" && i.src === "ai") ? T : null}</td>
                   </tr>
-                )))}</tbody>
+                )); })}</tbody>
               </table>
               <div className="rep-chart">
-                <Legend items={m.options.map((o, i) => ({ name: o.name, color: PAL[i % PAL.length] }))} />
+                <Legend items={m.options.map((o, i) => ({ name: o.name + ((o.impacts ?? []).some((x) => x.src === "ai") ? " (stima AI)" : ""), color: PAL[i % PAL.length] }))} />
                 <LineChart series={series} threshold={cashRule ? { v: cashRule.min!, label: cashRule.name } : undefined} xLabel={(i) => (i === 0 ? "oggi" : `${i}m`)} yFmt={(v) => fmt(v / 1000) + "k"} height={230} />
                 <small className="muted">Linea piena: scenario probabile. Tratteggio: se va male. In rosso il tuo limite di sicurezza.</small>
               </div>

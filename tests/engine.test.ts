@@ -254,6 +254,7 @@ console.log("engine: 10/10 ok");
   const sm = structToModel({ a: [{ n: "Vado" }, { n: "Resto" }], c: [{ n: "Famiglia", t: "g", i: 4 }], s: [{ a: "Vado", c: "Famiglia", v: 3 }, { a: "Resto", c: "Famiglia", v: 2 }],
     mi: [{ a: "Vado", r: "cash0", v: [-7000, -6000, -5000] }] });
   assert.equal(sm.model.options[0].impacts![0].src, "ai");
+  assert.equal(sm.model.options[0].impacts![0].v, -6000);   // intervallo su spesa iniziale → valore centrale, mai NaN
   const d: Decision = { id: "x", name: "x", status: "aperta", imp: 1, model: sm.model };
   assert.ok(E.tradeoff(d, E.analyzeDecision(d))!.risks.some((r) => r.includes("stime dell'AI")));
   // 22. conclusività con dati mancanti
@@ -274,4 +275,18 @@ console.log("engine: 10/10 ok");
   assert.ok(!sl.tested && sl.alone && sl.estShare === 100);
   assert.ok(!E.untestedText(sl).includes("Nessuna stima") && E.untestedText(sl).includes("da verificare"));
   console.log("engine: solidità senza confronto ok");
+  // 24. importi senza simbolo € e consenso
+  for (const [a, b] of [["RAL 40k", "40"], ["stipendio 3200 al mese", "3200"], ["affitto 1450", "1450"], ["pago 900 di affitto", "900"], ["2.900 netti", "2.900"], ["costi 5000 e 300 al mese", "300"]] as const)
+    assert.ok(!E.redactMoney(a).includes(b), a + " → " + E.redactMoney(a));
+  assert.equal(E.redactMoney("figlio di 3 anni, 45 ore a settimana dal 2019"), "figlio di 3 anni, 45 ore a settimana dal 2019");
+  // 25. vincolo obbligatorio pendente sulla prima: niente «prima robusta» (caso della revisione)
+  const vp: Decision = { id: "v", name: "v", status: "aperta", imp: 1, model: {
+    criteria: [{ id: "a", name: "A", w: 0, imp: 4, kind: "g" }, { id: "b", name: "B", w: 0, imp: 1, kind: "g" }],
+    constraints: [{ id: "k", name: "B almeno 75", crit: "b", min: 75 }],
+    options: [{ id: "x", name: "X", s: { a: 100 } }, { id: "y", name: "Y", s: { a: 50, b: 100 } }] } };
+  const kv = E.conclusive(vp, E.analyzeDecision(vp));
+  assert.ok(!kv.ok && kv.pend?.name === "X", JSON.stringify(kv));
+  const solo: Decision = { ...vp, model: { ...vp.model, options: [vp.model.options[0]] } };
+  assert.ok(!E.conclusive(solo, E.analyzeDecision(solo)).ok);
+  console.log("engine: importi senza simbolo, vincoli pendenti ok");
 }

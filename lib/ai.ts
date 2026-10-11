@@ -93,7 +93,10 @@ export function structToModel(x: AiStruct): { name: string; model: Model; questi
   for (const i of [...arr<NonNullable<AiStruct["mi"]>[0]>(x.mi), ...arr<NonNullable<AiStruct["m"]>[0]>(x.m)]) {
     const o = oid(i.a);
     if (!o || !["cash0", "cash_m", "hours_w"].includes(i.r)) continue;
-    const v = Array.isArray(i.v) && i.v.length === 3 ? (i.v.map(Number) as [number, number, number]) : Number(Array.isArray(i.v) ? i.v[0] : i.v);
+    // solo la differenza mensile ha tre scenari; spesa iniziale e ore sono un valore unico (il centrale)
+    const v = i.r === "cash_m" && Array.isArray(i.v) && i.v.length === 3 ? (i.v.map(Number) as [number, number, number])
+      : Number(Array.isArray(i.v) ? i.v[i.v.length === 3 ? 1 : 0] : i.v);
+    if (Array.isArray(v) ? v.some((n) => !Number.isFinite(n)) : !Number.isFinite(v)) continue;
     o.impacts.push({ r: i.r, v, src: "ai", ...(i.t ? { tag: i.t } : {}) });   // importo proposto dall'AI: resta «stima» finché non lo confermi
   }
   const constraints = arr<NonNullable<AiStruct["v"]>[0]>(x.v).flatMap((k) => {
