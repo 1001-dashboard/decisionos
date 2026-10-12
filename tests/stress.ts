@@ -223,13 +223,20 @@ T(V, "server: un client manipolato non fa uscire numeri economici con chiavi arb
   return ck(!/3200|1450/.test(c), c);
 });
 T(V, "server: un client manipolato non nasconde numeri dentro le liste", () => {
-  const c = JSON.stringify(cleanPayload("struttura", { t: "x", r: [[2500, "stipendio"]], pr: { soldi: 4 } }));
+  const c = JSON.stringify(cleanPayload("struttura", { t: "x", r: [[2500, "stipendio"]], pr: { soldi: 4 }, cxok: true }));
   return ck(!/2500/.test(c) && /"soldi":4/.test(c), c);
 });
 T(V, "contesto: al server passa solo il testo, ripulito; il contesto nelle decisioni è testo ripulito", () => {
   const a = JSON.stringify(cleanPayload("contesto", { t: "La mia RAL è 40k e ho 23.000 € di risparmi", vault: [{ n: 23000 }] }));
-  const b = JSON.stringify(cleanPayload("struttura", { t: "x", cx: ["[risorsa] Risparmi 23.000 €"], extra: 5000 }));
+  const b = JSON.stringify(cleanPayload("struttura", { t: "x", cx: ["[risorsa] Risparmi 23.000 €"], extra: 5000, cxok: true }));
   return ck(!/40k|23\.000|23000|vault|extra/.test(a + b) && /cx/.test(b), a + b);
+});
+T(V, "contesto e priorità: senza consenso della richiesta il server li scarta", () => {
+  const no = JSON.stringify(cleanPayload("struttura", { t: "x", pr: { soldi: 5 }, cx: ["[vincolo] famiglia"], ctx: "famiglia: 2 figli" }));
+  const si = JSON.stringify(cleanPayload("struttura", { t: "x", pr: { soldi: 5 }, cx: ["[vincolo] famiglia"], cxok: true }));
+  const d = D([{ name: "A" }, { name: "B" }]);
+  const c0 = JSON.stringify(AI.compact(d, undefined, { eco: false, ctx: "lavoro: area manager", cx: ["[valore] famiglia"] }));
+  return ck(!/pr|cx|ctx|famiglia/.test(no) && /"pr"/.test(si) && /famiglia/.test(si) && !/cxok/.test(si) && !/area manager|famiglia/.test(c0), [no, si, c0].join(" | "));
 });
 T(V, "con consenso esplicito i numeri passano", () => {
   const c = JSON.stringify(cleanPayload("contro", { eco: true, o: [{ n: "A", im: [["cash_m", 900]] }], base: { cash0: 30000 } }));

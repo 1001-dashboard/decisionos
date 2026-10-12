@@ -11,7 +11,7 @@ export async function ai<T = unknown>(mode: string, payload: unknown): Promise<T
 /** Payload minimo per l'AI: chiavi brevi, solo ciò che serve.
  *  Con eco=false nessun importo in € esce: i valori dei criteri economici diventano una posizione sulla scala
  *  (es. "buono"), le soglie in € spariscono, i testi liberi vengono ripuliti. Il server applica comunque una seconda pulizia. */
-export function compact(d: Decision, r: DecResult | undefined, opts: { eco: boolean; ctx?: string; res?: Resources; cx?: string[] }) {
+export function compact(d: Decision, r: DecResult | undefined, opts: { eco: boolean; ctx?: string; res?: Resources; cx?: string[]; cxok?: boolean }) {
   const m = d.model;
   const nm = normalize(m);
   const tx = (t?: string) => (t == null ? undefined : opts.eco ? t : redactMoney(t));
@@ -55,8 +55,10 @@ export function compact(d: Decision, r: DecResult | undefined, opts: { eco: bool
       sens: r.sens.filter((s) => s.delta != null).map((s) => `${s.name} ${s.delta}pt→${r.rows.find((x) => x.id === s.newTop)?.name}`),
     } : {}),
     ...(opts.eco && opts.res ? { base: opts.res } : {}),
-    ...(opts.ctx ? { ctx: tx(opts.ctx) } : {}),
-    ...(opts.cx?.length ? { cx: opts.cx } : {}),
+    // contesto personale (profilo e Contesto): solo con il consenso della richiesta; il server lo scarta senza cxok
+    ...(opts.cxok && opts.ctx ? { ctx: tx(opts.ctx) } : {}),
+    ...(opts.cxok && opts.cx?.length ? { cx: opts.cx } : {}),
+    ...(opts.cxok ? { cxok: true } : {}),
   };
 }
 

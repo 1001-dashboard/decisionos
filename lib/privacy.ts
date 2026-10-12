@@ -22,6 +22,8 @@ const ALLOW: Record<string, string[]> = {
 const NUM_OK: Record<string, string[]> = { struttura: ["pr"], strade: ["c", "o", "r", "hz"], dati: ["c", "o", "r", "hz"], contro: ["c", "o", "r", "hz"], svolta: ["c", "o", "r", "hz"] };
 const NUM_MAX = 100;
 const DROP = new Set(["im", "mi", "base"]);
+/** campi di contesto personale: profilo (ctx), elementi del Contesto (cx), priorità generali (pr) */
+const CTX_KEYS = new Set(["ctx", "cx", "pr"]);
 
 function scrubIn(x: unknown, numOk: boolean): unknown {
   if (typeof x === "string") return redactMoney(x);
@@ -39,8 +41,10 @@ export function cleanPayload(mode: string, payload: unknown): unknown {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
   const p = payload as Record<string, unknown>;
   const eco = p.eco === true;
+  // contesto personale e priorità escono solo se questa richiesta lo dice esplicitamente (cxok), come per le cifre
+  const cxok = p.cxok === true;
   const allow = ALLOW[mode];
-  const kept = Object.fromEntries(Object.entries(p).filter(([k]) => k !== "eco" && (!allow || allow.includes(k))));
+  const kept = Object.fromEntries(Object.entries(p).filter(([k]) => k !== "eco" && k !== "cxok" && (!allow || allow.includes(k)) && (cxok || !CTX_KEYS.has(k))));
   if (eco) return kept;
   const ok = new Set(NUM_OK[mode] ?? []);
   return Object.fromEntries(Object.entries(kept).filter(([k]) => !DROP.has(k)).map(([k, v]) => [k, scrubIn(v, ok.has(k))]));

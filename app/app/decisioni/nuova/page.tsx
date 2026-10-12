@@ -12,7 +12,7 @@ import { Top } from "@/components/Shell";
 import { ai, structToModel, type AiStruct } from "@/lib/ai";
 import { exampleDecision } from "@/lib/demo";
 import { uid, weightsFromImp, redactMoney, PLAN_L, TIPO_L, type Model } from "@/lib/engine";
-import { relevantCtx, ctxForAi, CTX_ONE } from "@/lib/context";
+import { relevantCtx, aiContext, CTX_ONE } from "@/lib/context";
 
 const TI: Record<string, React.ReactNode> = { briefcase: <Briefcase size={20} />, home: <Home size={20} />, car: <Car size={20} />, rocket: <Rocket size={20} />, package: <Package size={20} />, users: <Users size={20} />, graduation: <GraduationCap size={20} />, piggy: <PiggyBank size={20} /> };
 const REL = { F: ["ok", "verificato"], D: ["info", "dichiarato"], S: ["warn", "stima"], "?": ["bad", "da chiarire"] } as const;
@@ -24,6 +24,7 @@ export default function Nuova() {
   const r = useRouter();
   const { createDecision, profile, vault } = useWs();
   const [cxOff, setCxOff] = useState<string[]>([]);
+  const [cxUse, setCxUse] = useState(profile.ai_share.contesto);
   const [t, setT] = useState("");
   const [ans, setAns] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -31,16 +32,19 @@ export default function Nuova() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [eco, setEco] = useState(profile.ai_share.economia);
   const rel = t.trim().length >= 20 ? relevantCtx(vault, { name: "", descr: t }, 15) : [];
+  const nSend = rel.filter((x) => !cxOff.includes(x.id) && !x.priv && !x.sens).length;
   const answers = () => (draft?.questions ?? []).map((q, i) => (ans[i]?.trim() ? `${q} ${ans[i].trim()}` : "")).filter(Boolean);
 
   async function struttura() {
     setBusy(true); setE("");
     try {
-      const ctx = profile.ai_share.contesto ? Object.entries(profile.context).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("; ") : undefined;
+      const pc = aiContext(vault, { name: "", descr: t, model: { criteria: [], constraints: [], options: [], cxOff } }, { consent: cxUse, eco, profile: profile.context });
+      const ctx = pc.ctx;
       const rr = answers();
       const tx = (v: string) => (eco ? v : redactMoney(v));
-      const cx = ctxForAi(relevantCtx(vault, { name: "", descr: t }, 15, cxOff), eco);
-      const x = await ai<AiStruct>("struttura", { t: tx(t), pr: profile.priorities, ...(rr.length ? { r: rr.map(tx) } : {}), ...(ctx ? { ctx: tx(ctx) } : {}), ...(cx.length ? { cx } : {}), ...(eco ? { eco: true } : {}) });
+      // contesto e priorità solo se l'hai acconsentito per questa richiesta
+      const cx = pc.cx ?? [];
+      const x = await ai<AiStruct>("struttura", { t: tx(t), ...(cxUse ? { pr: profile.priorities, cxok: true } : {}), ...(rr.length ? { r: rr.map(tx) } : {}), ...(ctx ? { ctx: tx(ctx) } : {}), ...(cx.length ? { cx } : {}), ...(eco ? { eco: true } : {}) });
       const d = structToModel(x);
       if (!d.model.options.length && !d.model.criteria.length) { setE("L'Analista non ha prodotto un quadro utilizzabile: riprova, magari aggiungendo qualche dettaglio."); return; }
       setDraft(d); setAns(rr.length ? [] : ans);
@@ -84,17 +88,18 @@ export default function Nuova() {
           </div>
           {rel.length > 0 && (
             <div className="note cxu">
-              <b>Dal tuo contesto ho già {rel.length} {rel.length === 1 ? "elemento pertinente" : "elementi pertinenti"}</b> e li userò in questa decisione:
+              <b>Dal tuo contesto ho già {rel.length} {rel.length === 1 ? "elemento pertinente" : "elementi pertinenti"}</b> per questa decisione:
               <ul className="clean" style={{ marginTop: 4 }}>{rel.map((x) => (
                 <li key={x.id}><label className="row" style={{ gap: 6, alignItems: "flex-start", flexWrap: "nowrap" }}>
                   <input type="checkbox" style={{ width: "auto", marginTop: 3 }} checked={!cxOff.includes(x.id)} onChange={(e) => setCxOff((o) => (e.target.checked ? o.filter((y) => y !== x.id) : [...o, x.id]))} />
                   <span>{x.t} <small className="muted">· {CTX_ONE[x.k]}{x.priv || x.sens ? " · privato, non va all'AI" : ""}</small></span></label></li>))}</ul>
             </div>
           )}
+          <label className="row" style={{ gap: 8, fontSize: 14 }}><input type="checkbox" aria-label="Usa il contesto con l'Analista" checked={cxUse} onChange={(e) => setCxUse(e.target.checked)} /> Usa con l&apos;Analista {nSend ? `${nSend} ${nSend === 1 ? "elemento" : "elementi"} del mio contesto e ` : ""}le mie priorità generali</label>
           {busy && <small>L&apos;Analista sta preparando il quadro…</small>}
           {e && <div className="err">{e}</div>}
           <label className="row" style={{ gap: 8, fontSize: 14 }}><input type="checkbox" checked={eco} onChange={(e) => setEco(e.target.checked)} /> Includi le cifre in € (stipendio, affitto…) in questa richiesta</label>
-          <small>L&apos;Analista non ti dice cosa scegliere: ti propone cosa guardare. All&apos;AI vanno il testo e le tue priorità generali{profile.ai_share.contesto ? ", più il tuo contesto" : ""}. {eco ? "Le cifre in € vengono inviate." : "Gli importi vengono oscurati prima dell'invio (in cifre e nelle forme comuni in lettere, come «quarantamila euro»): li inserisci tu dopo."}</small>
+          <small>L&apos;Analista non ti dice cosa scegliere: ti propone cosa guardare. All&apos;AI va il testo{cxUse ? ", più le tue priorità generali e il contesto spuntato" : ""}. {eco ? "Le cifre in € vengono inviate." : "Gli importi vengono oscurati prima dell'invio (in cifre e nelle forme comuni in lettere, come «quarantamila euro»): li inserisci tu dopo."}</small>
         </div>
 
         <div className="card stack">

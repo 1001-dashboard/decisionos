@@ -6,7 +6,7 @@ import { useWs } from "@/components/Workspace";
 import { Top } from "@/components/Shell";
 import { ai, compact } from "@/lib/ai";
 import { analyzeDecision, uid } from "@/lib/engine";
-import { relevantCtx, ctxForAi } from "@/lib/context";
+import { relevantCtx, aiContext } from "@/lib/context";
 
 const MODES = [
   { k: "dati", l: "Analisi dei dati", d: "Fatti, stime, mancanze, contraddizioni", i: ListChecks },
@@ -21,7 +21,7 @@ function Inner() {
   const open = decisions.filter((d) => d.status !== "archiviata");
   const [id, setId] = useState(q.get("d") ?? open[0]?.id ?? "");
   const [eco, setEco] = useState(profile.ai_share.economia);
-  const [ctx, setCtx] = useState(profile.ai_share.contesto);
+  const [ctx, setCtx] = useState(profile.ai_share.contesto);   // contesto e priorità: consenso di questa richiesta
   const [busy, setBusy] = useState("");
   const [out, setOut] = useState<Record<string, Out>>({});
   const [e, setE] = useState("");
@@ -29,7 +29,8 @@ function Inner() {
   const payload = useMemo(() => {
     if (!d) return null;
     const c = ctx ? Object.entries(profile.context).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("; ") : undefined;
-    return compact(d, analyzeDecision(d), { eco, ctx: c, res: profile.resources, cx: ctxForAi(relevantCtx(vault, d, 15, d.model.cxOff ?? []), eco) });
+    // il toggle «Invia il mio contesto personale» di questa pagina governa profilo, Contesto e priorità
+    return compact(d, analyzeDecision(d), { eco, res: profile.resources, ...aiContext(vault, d, { consent: ctx, eco, profile: profile.context }) });
   }, [d, eco, ctx, profile, vault]);
 
   async function run(mode: string) {
@@ -51,7 +52,7 @@ function Inner() {
       <div className="card grid g3" style={{ marginBottom: 16, alignItems: "end" }}>
         <div><label className="f">Decisione</label><select value={id} onChange={(x) => { setId(x.target.value); setOut({}); }}>{open.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></div>
         <label className="row" style={{ gap: 8, fontSize: 14 }}><input type="checkbox" checked={eco} onChange={(x) => setEco(x.target.checked)} /> Invia cifre economiche (impatti, risorse)</label>
-        <label className="row" style={{ gap: 8, fontSize: 14 }}><input type="checkbox" checked={ctx} onChange={(x) => setCtx(x.target.checked)} /> Invia il mio contesto personale</label>
+        <label className="row" style={{ gap: 8, fontSize: 14 }}><input type="checkbox" checked={ctx} onChange={(x) => setCtx(x.target.checked)} /> Invia il mio contesto personale e le priorità{d ? ` (${relevantCtx(vault, d, 15, d.model.cxOff ?? []).filter((x) => !x.priv && !x.sens).length} elementi pertinenti del Contesto)` : ""}</label>
       </div>
       {payload && <details style={{ marginBottom: 16 }}><summary>Cosa viene inviato all&apos;AI ({JSON.stringify(payload).length} caratteri)</summary><pre style={{ whiteSpace: "pre-wrap", fontSize: 12, background: "#fff", padding: 12, borderRadius: 10, border: "1px solid var(--line)" }}>{JSON.stringify(payload, null, 1)}</pre></details>}
       {e && <div className="note bad" style={{ marginBottom: 16 }}>{e}</div>}

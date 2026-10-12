@@ -16,7 +16,8 @@ export type Profile = {
   horizon: number;
 };
 export type Snapshot = { id: string; label: string; input: SnapInput; result: unknown; created_at: string };
-export type SnapInput = { decisions: Decision[]; deps: Dep[]; resources: Resources; rules: Rule[]; horizon: number };
+/** context: il contesto personale che Decision OS conosceva e usava in quel momento (versione e soli elementi usati) */
+export type SnapInput = { decisions: Decision[]; deps: Dep[]; resources: Resources; rules: Rule[]; horizon: number; context?: { version: string; items: { k: string; t: string; n?: number; u?: string; via: string; priv?: boolean }[] } };
 export type Outcome = {
   id: string; decision_id: string | null; decision_name: string; chosen: string; chosen_id?: string | null; decided_at: string;
   expected?: string | null; review_at?: string | null; observed?: string | null; cause?: string | null; snapshot_id?: string | null;

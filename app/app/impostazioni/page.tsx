@@ -101,7 +101,8 @@ export default function Impostazioni() {
             <h3>Privacy e dati</h3>
             <label className="row" style={{ gap: 8 }}><input type="checkbox" checked={p.ai_share.economia} onChange={(e) => set({ ai_share: { ...p.ai_share, economia: e.target.checked } })} /> Consenti di inviare all&apos;AI cifre economiche (default per l&apos;Analista)</label>
             <small className="muted">Senza consenso gli importi vengono oscurati due volte, nell&apos;app e sul server: in cifre e nelle forme comuni in lettere. Un importo scritto in modo insolito nel testo libero può sfuggire: se un dato è delicato, non scriverlo nel racconto.</small>
-            <label className="row" style={{ gap: 8 }}><input type="checkbox" checked={p.ai_share.contesto} onChange={(e) => set({ ai_share: { ...p.ai_share, contesto: e.target.checked } })} /> Consenti di inviare contesto e priorità</label>
+            <label className="row" style={{ gap: 8 }}><input type="checkbox" checked={p.ai_share.contesto} onChange={(e) => set({ ai_share: { ...p.ai_share, contesto: e.target.checked } })} /> Consenti di inviare contesto e priorità (default: lo puoi cambiare in ogni richiesta)</label>
+            <small className="muted">Vale per il profilo qui sopra, per gli elementi confermati della sezione Contesto e per le priorità generali. Gli elementi privati non vengono mai inviati. Senza consenso il server scarta comunque contesto e priorità.</small>
             <div className="row">
               <button className="btn" onClick={exportAll}><Download size={16} /> Esporta tutto (JSON)</button>
               <button className="btn danger" onClick={wipe}><AlertOctagon size={16} /> Cancella tutti i dati</button>

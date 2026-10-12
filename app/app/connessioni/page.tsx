@@ -32,7 +32,7 @@ export default function Connessioni() {
     try {
       const x = await ai<{ d: { if: string; excl?: string; req?: string; why?: string }[] }>("link", {
         ds: pool.map((d) => ({ n: d.name, o: d.model.options.map((o) => ({ id: o.id, n: o.name })) })),
-        ...(profile.ai_share.contesto ? { ctx: profile.context } : {}),
+        ...(profile.ai_share.contesto ? { ctx: profile.context, cxok: true } : {}),
       });
       const ids = new Set(opts.map((o) => o.id));
       const got = (x.d ?? []).filter((p) => ids.has(p.if) && ((p.excl && ids.has(p.excl)) || (p.req && ids.has(p.req))));

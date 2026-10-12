@@ -488,3 +488,5 @@ details.cons summary small { font-weight: 400; }
 .ctxsteps li > div { margin-top: 6px; }
 .ctxrev { border-left: 5px solid var(--orange); }
 .cxu { font-size: 14px; }
+.scopes { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; } .scopes .pill { border: 0; cursor: pointer; }
+.ctxi.exp input[aria-label="Elemento"] { color: var(--red); }

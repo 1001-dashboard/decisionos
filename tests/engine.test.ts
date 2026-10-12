@@ -730,7 +730,7 @@ console.log("engine: 10/10 ok");
 ## VALORI E PRIORITÀ
 - [stabile] La famiglia unita viene prima del lavoro | imp=5
 ## REGOLE PERSONALI
-- Non uso più del 30% dei risparmi per un progetto
+- Non uso più del 30% dei risparmi per un progetto | globale
 ## DA VERIFICARE
 - [fase] Possibile trasferimento a Ibiza | sensibile
 - [fase] …`;
@@ -754,4 +754,78 @@ console.log("engine: 10/10 ok");
   const pic = C.contextPicture([...ok, { id: "z", k: "progetto", t: "FleetUnit in sviluppo", layer: "fase", st: "proposto" }], decs, "2026-10-12");
   assert.ok(pic.some((p) => /2 decisioni aperte consumano la stessa risorsa, tempo/.test(p)) && pic.some((p) => /aspetta la tua conferma/.test(p)), JSON.stringify(pic));
   console.log("contesto: import, revisione, pertinenza, privacy, pesi, quadro ok");
+}
+{
+  // 64. pertinenza per ambiti e relazioni, non solo parole: i casi del test di Danilo
+  const C = await import("../lib/context.ts");
+  const mk = (k: string, t: string, extra = {}) => ({ id: t.slice(0, 8), k, t, layer: "fase", st: "confermato", ...extra }) as import("../lib/context.ts").CtxItem;
+  const items = [
+    mk("vincolo", "Lo studio di mia moglie deve restare vicino a casa e all'asilo di nostro figlio"),
+    mk("fatto", "A Roma non pago affitto"),
+    mk("progetto", "Decision OS: piattaforma personale per decidere"),
+    mk("progetto", "FleetUnit, piattaforma per flotte in sviluppo"),
+    mk("risorsa", "Liquidità disponibile", { res: "cash0", n: 23000 }),
+    mk("regola", "Non scendo mai sotto 10.000 € di risparmi", { global: true }),
+  ];
+  const q = (name: string, descr: string, tipo?: string) => C.rankCtx(items, { name, descr, model: { tipo, criteria: [], constraints: [], options: [] } as never });
+  const fu = q("Quanto investire in FleetUnit?", "Quanto capitale mettere nello sviluppo di FleetUnit", "progetto").map((h) => h.x.t);
+  assert.ok(fu.some((t) => /FleetUnit/.test(t)) && fu.some((t) => /Liquidit/.test(t)) && !fu.some((t) => /asilo|Decision OS|non pago affitto/.test(t)), JSON.stringify(fu));
+  const mi = q("Accetto un lavoro a Milano?", "Mi offrono un posto da operations manager a Milano", "lavoro");
+  assert.ok(mi.some((h) => /non pago affitto/.test(h.x.t)) && mi.some((h) => /asilo/.test(h.x.t)), JSON.stringify(mi.map((h) => [h.via, h.x.t])));
+  const sw = q("Quale app per le note", "Scelgo un'app per prendere appunti");
+  assert.ok(sw.length === 1 && sw[0].via === "globale", JSON.stringify(sw.map((h) => h.x.t)));   // solo la regola globale
+  // ambiti scelti da te prevalgono su quelli riconosciuti dal testo
+  const it2 = [mk("vincolo", "Lo studio di mia moglie deve restare vicino a casa", { scope: ["progetti"] })];
+  assert.equal(C.rankCtx(it2, { name: "Quanto investire in FleetUnit?", descr: "capitale", model: { tipo: "progetto", criteria: [], constraints: [], options: [] } as never }).length, 1);
+  console.log("contesto: pertinenza per ambiti, relazioni e regole globali ok");
+}
+{
+  // 65. fotografia del contesto alla scelta e aggiornamenti proposti dalla decisione presa (mai automatici)
+  const C = await import("../lib/context.ts");
+  const items: import("../lib/context.ts").CtxItem[] = [
+    { id: "d1", k: "decisione", t: "Offerta di lavoro a Ibiza", layer: "fase", st: "confermato" },
+    { id: "v1", k: "vincolo", t: "Non posso restare senza reddito oltre 6 mesi", layer: "fase", st: "confermato" },
+  ];
+  const dec: Decision = { id: "x", name: "Lavoro a Ibiza", status: "aperta", imp: 1, model: { tipo: "lavoro", criteria: [], constraints: [], options: [{ id: "a", name: "Accetto Ibiza", s: {}, impacts: [{ r: "hours_w", v: -30 }, { r: "cash_m", v: [500, 900, 1200] }] }] } };
+  const sn = C.ctxSnapshot(items, dec);
+  assert.ok(sn.n === 2 && sn.t.some((t) => /Ibiza/.test(t)) && sn.h.length >= 5);
+  assert.notEqual(C.ctxSnapshot([...items, { id: "n", k: "fatto", t: "Nuovo", layer: "fase", st: "confermato" }], dec).h, sn.h);   // il contesto è cambiato: versione diversa
+  const ups = C.contextUpdates(items, dec, dec.model.options[0], { hours_w: 40, cash_m: 200 }, "2026-10-12");
+  assert.ok(ups.some((u) => u.kind === "supera" && u.item === "d1") && ups.some((u) => u.kind === "nuovo" && u.item.res === "hours_w" && u.item.n === 10) && ups.some((u) => u.kind === "nuovo" && u.item.n === 1100), JSON.stringify(ups.map((u) => u.t)));
+  ups.find((u) => u.id === "m")!.on = false;
+  const after = C.applyUpdates(items, ups);
+  assert.ok(after.find((x) => x.id === "d1")!.st === "superato" && after.some((x) => x.res === "hours_w") && !after.some((x) => x.res === "cash_m") && after.length === 4);
+  console.log("contesto: fotografia alla scelta e aggiornamenti proposti ok");
+}
+{
+  // 66. consenso in un punto solo, scadenze, grafo (influenza e collegamenti), contesto congelato
+  const C = await import("../lib/context.ts");
+  const AI = await import("../lib/ai.ts");
+  const mk = (id: string, k: string, t: string, extra = {}) => ({ id, k, t, layer: "fase", st: "confermato", ...extra }) as import("../lib/context.ts").CtxItem;
+  const dec: Decision = { id: "x", name: "Accetto un lavoro a Milano?", descr: "Offerta da operations manager a Milano", status: "aperta", imp: 1, model: { tipo: "lavoro", criteria: [{ id: "f", name: "Famiglia unita", w: 0, imp: 3, kind: "g" }], constraints: [], options: [] } };
+  const items = [
+    mk("v", "valore", "Famiglia unita prima di tutto", { layer: "stabile", imp: 5 }),
+    mk("o", "vincolo", "Offerta di Ibiza valida", { until: "2026-09-01" }),   // scaduto
+    mk("s", "progetto", "Studio di onicotecnica da zero clienti", { links: [{ to: "v", rel: "riguarda" }] }),
+    mk("p", "progetto", "SigmaOS", { affects: ["luogo", "lavoro"] as never }),
+  ];
+  // consenso: senza, nulla; con, contesto e cxok; il payload di compact segue
+  assert.deepEqual(C.aiContext(items, dec, { consent: false, eco: false, profile: { lavoro: "x" } }), {});
+  const on = C.aiContext(items, dec, { consent: true, eco: false, profile: { lavoro: "area manager" } });
+  assert.ok(on.cxok && on.ctx === "lavoro: area manager" && on.cx!.some((l) => /Famiglia/.test(l)));
+  const off = JSON.stringify(AI.compact(dec, undefined, { eco: false, ...C.aiContext(items, dec, { consent: false, eco: false }) }));
+  assert.ok(!/Famiglia unita prima|cxok/.test(off));
+  // scaduto: fuori da pertinenza, AI e pesi, ma segnalato nel quadro
+  const h = C.rankCtx(items, dec, [], "2026-10-12");
+  assert.ok(!h.some((y) => y.x.id === "o"), JSON.stringify(h.map((y) => y.x.t)));
+  assert.ok(!C.critHints([mk("e", "valore", "Famiglia unita", { imp: 5, until: "2026-01-01" })], dec.model.criteria).length);
+  assert.ok(C.contextPicture(items, [], "2026-10-12").some((p) => /scadut.*non .*più usat/.test(p)));
+  // grafo: lo studio è collegato al valore pertinente; SigmaOS influenza dove vivi e il lavoro
+  const st = h.find((y) => y.x.id === "s"), sg = h.find((y) => y.x.id === "p");
+  assert.ok(st && st.via === "collegato" && /Famiglia/.test(st.from!) && sg, JSON.stringify(h.map((y) => [y.via, y.x.t])));
+  // contesto congelato: versione e solo gli elementi usati, con il motivo
+  const fz = C.ctxFreeze(items, dec);
+  assert.ok(fz.version === C.ctxVersion(items) && fz.items.length === h.length && fz.items.every((i) => i.via) && !fz.items.some((i) => /Ibiza/.test(i.t)));
+  assert.notEqual(C.ctxVersion(items), C.ctxVersion(items.map((x) => (x.id === "v" ? { ...x, t: "Famiglia" } : x))));
+  console.log("contesto: consenso unico, scadenze, grafo, contesto congelato ok");
 }

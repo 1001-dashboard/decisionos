@@ -74,5 +74,5 @@ npm test
   - massimo 3 decisioni combinate, con al massimo 3 alternative ciascuna;
   - proiezione lineare a flusso costante;
   - nessuna probabilità sugli scenari.
-- **Privacy:** RLS su ogni tabella. Le cifre economiche e il contesto personale vengono inviati all'AI solo se li abiliti. Puoi esportare tutto in JSON e cancellare tutto.
+- **Privacy:** RLS su ogni tabella. Le cifre economiche vengono oscurate (in cifre e nelle forme comuni in lettere) se non le abiliti. Contesto personale (profilo, elementi confermati del Contesto) e priorità vanno all'AI solo con il consenso della singola richiesta (di base quello delle Impostazioni); gli elementi privati mai. Il server scarta comunque cifre, contesto e priorità senza consenso. Puoi esportare tutto in JSON e cancellare tutto.
 - **Grafiche:** il logo e l'icona sono quelli forniti, ritagliati in `public/brand/`. Le altre tavole (icone, dashboard, illustrazioni) sono state ricostruite in italiano con icone vettoriali e grafici SVG calcolati, così restano nitide, coerenti con la palette e con dati veri.

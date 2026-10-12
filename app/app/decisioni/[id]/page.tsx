@@ -18,7 +18,7 @@ import { CRIT_LIB } from "@/lib/templates";
 import { briefing } from "@/lib/narrative";
 import { execPlan, setStep as setPlanStep, type PlanItem, type Plan } from "@/lib/execution";
 import { monitorOf, watchProposals, watchState, observe } from "@/lib/monitor";
-import { relevantCtx, ctxForAi, critHints, CTX_ONE } from "@/lib/context";
+import { relevantCtx, rankCtx, decScopes, aiContext, ctxFreeze, critHints, CTX_ONE, SCOPE_L, LINK_L } from "@/lib/context";
 import { impFor, priGap } from "@/lib/priorities";
 import { ai, compact, mergeStrade, contiFromAi, contiPayload, premessaPayload, type AiStrade, type AiConti, type AiPremessa } from "@/lib/ai";
 
@@ -593,7 +593,7 @@ export default function DecisionPage() {
   async function freeze() {
     const label = prompt("Nome dell'analisi da congelare", `${d!.name} · ${new Date().toLocaleDateString("it-IT")}`);
     if (!label) return;
-    await ws.createSnapshot(label, { decisions: [d!], deps: ws.deps, resources: ws.profile.resources, rules: ws.profile.rules, horizon: ws.profile.horizon }, { res: [res] });
+    await ws.createSnapshot(label, { decisions: [d!], deps: ws.deps, resources: ws.profile.resources, rules: ws.profile.rules, horizon: ws.profile.horizon, ...(ws.vault.length ? { context: ctxFreeze(ws.vault, d!) } : {}) }, { res: [res] });
     alert("Analisi congelata nel Registro.");
   }
   async function del() {
@@ -609,13 +609,17 @@ export default function DecisionPage() {
   const cOpt = crossOpt && m.options.some((o) => o.id === crossOpt) ? crossOpt : top?.id ?? m.options[0]?.id ?? "";
   const cross = cOpt ? crossEffects(cOpt, d, others, ws.deps, R, ws.profile.rules, ws.profile.horizon) : [];
   const gaps = m.criteria.map((c) => ({ c, g: priGap(c.name, c.imp, ws.profile.priorities) })).filter((x) => x.g);
-  const ctxStr = ws.profile.ai_share.contesto ? Object.entries(ws.profile.context).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("; ") : undefined;
+  // consenso al contesto per questa decisione: di base quello delle Impostazioni, modificabile nei Dettagli
+  const cxUse = m.cxAi ?? ws.profile.ai_share.contesto;
+  // tutto ciò che è personale passa da aiContext: senza consenso resta vuoto
+  const aiCx = (eco0: boolean, dd: Decision = d) => aiContext(ws.vault, dd, { consent: cxUse, eco: eco0, profile: ws.profile.context });
+  const ctxStr = aiCx(false).ctx;
   // contesto personale pertinente: solo confermato, mai privato verso l'AI, escludibile per decisione
   const cxRel = relevantCtx(ws.vault, d, 15, m.cxOff ?? []);
-  const cxAll = relevantCtx(ws.vault, d, 15);
-  const cx = (eco0: boolean) => ctxForAi(cxRel, eco0);
+  const cxHits = rankCtx(ws.vault, d).slice(0, 15);
+  const cxAll = cxHits.map((h) => h.x);
   const hints = critHints(cxRel, m.criteria);
-  const aiPayload = compact(d, res, { eco: ws.profile.ai_share.economia, ctx: ctxStr, res: R, cx: cx(ws.profile.ai_share.economia) });
+  const aiPayload = compact(d, res, { eco: ws.profile.ai_share.economia, res: R, ...aiCx(ws.profile.ai_share.economia) });
   const aiHash = hashOf(aiPayload);
   const contro = m.ai?.contro;
   async function runContro() {
@@ -686,7 +690,7 @@ export default function DecisionPage() {
       const before = d!.model;
       const xc = await ai<AiConti>("conti", contiPayload(d!, eco));
       let model = contiFromAi(before, xc).model;
-      const xs = await ai<AiStrade>("strade", compact({ ...d!, model }, undefined, { eco, ctx: ctxStr, cx: cx(eco) }));
+      const xs = await ai<AiStrade>("strade", compact({ ...d!, model }, undefined, { eco, ...aiCx(eco, { ...d!, model }) }));
       model = mergeStrade(model, xs).model;
       const cnt = (mm: Model) => ({ v: [...(mm.oggi ?? []), ...mm.options.flatMap((o) => o.conti ?? [])].filter((l) => l.v != null).length,
         c: mm.options.reduce((a, o) => a + (o.cond?.length ?? 0), 0), r: mm.options.reduce((a, o) => a + (o.risks?.length ?? 0), 0), t: mm.options.reduce((a, o) => a + (o.tl?.length ?? 0), 0) });
@@ -709,7 +713,7 @@ export default function DecisionPage() {
   async function runStrade() {
     setAiBusy(true); setAiErr("");
     try {
-      const x = await ai<AiStrade>("strade", compact(d!, undefined, { eco: ws.profile.ai_share.economia, ctx: ctxStr, cx: cx(ws.profile.ai_share.economia) }));
+      const x = await ai<AiStrade>("strade", compact(d!, undefined, { eco: ws.profile.ai_share.economia, ...aiCx(ws.profile.ai_share.economia) }));
       const { model, added } = mergeStrade(m, x);
       model.ai = { ...model.ai, strade: { at: new Date().toISOString(), h: hashOf({ t: d!.descr, o: model.options.map((o) => o.name) }), ...(typeof x.x === "string" && x.x ? { x: x.x } : {}) } };
       upd({ ...d!, model });
@@ -773,11 +777,13 @@ export default function DecisionPage() {
           <div style={{ gridColumn: "1/-1" }} className="cxu">
             <label className="f">Contesto usato</label>
             {!cxAll.length ? <small className="muted">Nessun elemento del tuo contesto riguarda questa decisione. <Link href="/app/contesto">Contesto</Link></small> : <>
-              <small>{cxRel.length} {cxRel.length === 1 ? "elemento" : "elementi"} dal tuo profilo · {cxRel.filter((x) => !x.priv && !x.sens).length} inviati all&apos;Analista (gli altri sono privati) · togli la spunta per non usarne uno qui.</small>
+              <label className="row" style={{ gap: 8, fontSize: 14 }}><input type="checkbox" aria-label="Usa il contesto con l'Analista" checked={cxUse} onChange={(e) => setM((mm) => { mm.cxAi = e.target.checked; })} /> Usa con l&apos;Analista {cxRel.filter((x) => !x.priv && !x.sens).length} elementi del mio contesto e le mie priorità</label>
+              <small>{cxRel.length} {cxRel.length === 1 ? "elemento pertinente" : "elementi pertinenti"} dal tuo profilo · {cxUse ? `${cxRel.filter((x) => !x.priv && !x.sens).length} inviati all'Analista (gli altri sono privati)` : "nessuno inviato all'Analista"} · togli la spunta per non usarne uno qui.</small>
               <ul className="clean">{cxAll.map((x) => (
                 <li key={x.id}><label className="row" style={{ gap: 6, alignItems: "flex-start", flexWrap: "nowrap" }}>
                   <input type="checkbox" style={{ width: "auto", marginTop: 3 }} checked={!(m.cxOff ?? []).includes(x.id)} onChange={(e) => setM((mm) => { const o = new Set(mm.cxOff ?? []); if (e.target.checked) o.delete(x.id); else o.add(x.id); mm.cxOff = [...o]; })} />
-                  <span>{x.t} <small className="muted">· {CTX_ONE[x.k]}{x.priv || x.sens ? " · privato" : ""}</small></span></label></li>))}</ul>
+                  <span>{x.t} <small className="muted">· {CTX_ONE[x.k]} · {(() => { const h = cxHits.find((y) => y.x.id === x.id); return h?.via === "collegato" ? `collegato: ${LINK_L[h.rel!]} «${h.from!.slice(0, 40)}»` : ({ globale: "vale per tutte", diretto: "tocca direttamente", indiretto: "tocca indirettamente", parole: "citato" } as Record<string, string>)[h?.via ?? "parole"]; })()}{x.conf === "bassa" ? " · da verificare" : ""}{x.priv || x.sens ? " · privato" : ""}</small></span></label></li>))}</ul>
+              <small className="muted">Questa scelta tocca direttamente {cxHits.filter((h) => h.via !== "indiretto" && h.via !== "collegato").length} {cxHits.filter((h) => h.via !== "indiretto" && h.via !== "collegato").length === 1 ? "elemento" : "elementi"} del tuo contesto e indirettamente altri {cxHits.filter((h) => h.via === "indiretto" || h.via === "collegato").length}: ambiti {decScopes(d).direct.map((z) => SCOPE_L[z]).join(", ") || "—"}{decScopes(d).near.length ? `, collegati ${decScopes(d).near.map((z) => SCOPE_L[z]).join(", ")}` : ""}.</small>
             </>}
           </div>
           <div style={{ gridColumn: "1/-1" }}><label className="f">La situazione in breve (premessa)</label><textarea style={{ minHeight: 90 }} value={d.descr ?? ""} onChange={(e) => upd({ ...d, descr: e.target.value })} />

@@ -6,12 +6,13 @@ import { useWs, type Snapshot, type Outcome } from "@/components/Workspace";
 import { Top } from "@/components/Shell";
 import { ai } from "@/lib/ai";
 import { watchProposals } from "@/lib/monitor";
+import { ctxSnapshot, ctxFreeze, ctxVersion, contextUpdates, applyUpdates, type CtxUpdate } from "@/lib/context";
 import { analyzeDecision, fmt, eur, isOut, predOf, lessons, LEARN_MIN, type DecResult, type Act } from "@/lib/engine";
 
 const CAUSE: Record<string, string> = { ragionamento: "Errore di ragionamento", dato: "Dato sbagliato", imprevisto: "Evento imprevedibile", nessuno: "Previsione corretta" };
 
 function Compare({ s }: { s: Snapshot }) {
-  const { decisions } = useWs();
+  const { decisions, vault } = useWs();
   const then = (s.result as { res: DecResult[] }).res ?? [];
   return (
     <div className="stack" style={{ marginTop: 10 }}>
@@ -31,6 +32,11 @@ function Compare({ s }: { s: Snapshot }) {
                   <td>{dlt == null ? "—" : <span className={`pill ${Math.abs(dlt) < 0.05 ? "info" : dlt > 0 ? "ok" : "bad"}`}>{dlt > 0 ? "+" : ""}{fmt(dlt)}</span>}</td></tr>;
               })}</tbody></table>
             {now && now.rows[0]?.id !== t.rows[0]?.id && <div className="note warn">La prima scelta è cambiata: da {t.rows[0]?.name} a {now.rows[0]?.name}.</div>}
+            {s.input.context && (
+              <details><summary>Contesto usato allora: {s.input.context.items.length} elementi <small className="muted">(versione {s.input.context.version}{s.input.context.version !== ctxVersion(vault) ? ", oggi è cambiato" : ", uguale a oggi"})</small></summary>
+                <ul className="clean">{s.input.context.items.map((x) => <li key={x.t}><small>[{x.k}] {x.t}{x.n != null ? ` · ${x.n}${x.u ? " " + x.u : ""}` : ""}{x.priv ? " · privato" : ""}</small></li>)}</ul>
+              </details>
+            )}
             {changedW.length ? <small>Pesi modificati da allora: {changedW.map((c) => `${c.name} ${w0.find((x) => x.id === c.id)?.w ?? "nuovo"}→${c.w}`).join(", ")}</small> : null}
           </div>
         );
@@ -113,6 +119,11 @@ function OutcomeCard({ o }: { o: Outcome }) {
         <input type="date" style={{ width: "auto" }} value={o.review_at ?? ""} onChange={(e) => saveOutcome({ id: o.id, review_at: e.target.value || null })} title="Data revisione" />
         <button className="btn sm" disabled={busy || !o.observed} onClick={retro}><Bot size={14} /> {busy ? "…" : "Retrospettiva AI"}</button>
       </div>
+      {o.pred?.cx && (
+        <details><summary>Contesto che conoscevo quando hai deciso: {o.pred.cx.n} {o.pred.cx.n === 1 ? "elemento" : "elementi"} <small className="muted">(versione {o.pred.cx.h})</small></summary>
+          <ul className="clean">{o.pred.cx.t.map((t) => <li key={t}><small>{t}</small></li>)}</ul>
+        </details>
+      )}
       {o.pred && <Consuntivo o={o} />}
       {ai_ && <div className="note"><ul style={{ margin: 0, paddingLeft: 18 }}>{(ai_.p ?? []).map((p, i) => <li key={i}>{p}</li>)}</ul>{ai_.c && <p style={{ margin: "6px 0 0" }}><strong>{ai_.c}</strong></p>}</div>}
     </div>
@@ -123,6 +134,7 @@ function Inner() {
   const q = useSearchParams();
   const ws = useWs();
   const [cmp, setCmp] = useState<string | null>(null);
+  const [ups, setUps] = useState<CtxUpdate[] | null>(null);
   const pre = ws.decisions.find((d) => d.id === q.get("d"));
   const [f, setF] = useState({ decision_id: pre?.id ?? "", chosen: q.get("o") ?? "", expected: "", review_at: "" });   // chosen = id della strada
   const dec = ws.decisions.find((d) => d.id === f.decision_id);
@@ -131,10 +143,10 @@ function Inner() {
   async function register() {
     if (!dec || !f.chosen) return;
     const r = analyzeDecision(dec);
-    await ws.createSnapshot(`${dec.name} · decisione presa`, { decisions: [dec], deps: ws.deps, resources: ws.profile.resources, rules: ws.profile.rules, horizon: ws.profile.horizon }, { res: [r] });
+    await ws.createSnapshot(`${dec.name} · decisione presa`, { decisions: [dec], deps: ws.deps, resources: ws.profile.resources, rules: ws.profile.rules, horizon: ws.profile.horizon, ...(ws.vault.length ? { context: ctxFreeze(ws.vault, dec) } : {}) }, { res: [r] });
     const ch = dec.model.options.find((o) => o.id === f.chosen && !isOut(o));
     if (!ch) return;
-    await ws.saveOutcome({ decision_id: dec.id, decision_name: dec.name, chosen: ch.name, chosen_id: ch.id, pred: predOf(dec, r, ch.id, ws.profile.resources), expected: f.expected || null, review_at: f.review_at || null });
+    await ws.saveOutcome({ decision_id: dec.id, decision_name: dec.name, chosen: ch.name, chosen_id: ch.id, pred: (() => { const p = predOf(dec, r, ch.id, ws.profile.resources); return p && ws.vault.length ? { ...p, cx: ctxSnapshot(ws.vault, dec) } : p; })(), expected: f.expected || null, review_at: f.review_at || null });
     // la strada scelta diventa uno stato vero della decisione (le altre tornano attive se erano «scelta»)
     const now = new Date().toISOString();
     const options = dec.model.options.map((o) => (o.id === ch.id ? { ...o, st: "scelta" as const, stAt: now } : o.st === "scelta" ? { ...o, st: "attiva" as const, stAt: now } : o));
@@ -142,6 +154,8 @@ function Inner() {
     const mm = { ...dec.model, options };
     const watch = dec.model.watch?.length ? dec.model.watch : watchProposals({ ...dec, model: mm }, ch.id, ws.profile.resources, ws.profile.rules);
     await ws.saveDecision({ ...dec, status: "presa", model: { ...mm, watch } });
+    // la decisione presa insegna qualcosa al contesto: lo proponiamo, non lo applichiamo
+    if (ws.vault.length) setUps(contextUpdates(ws.vault, dec, ch, ws.profile.resources));
     setF({ decision_id: "", chosen: "", expected: "", review_at: "" });
   }
 
@@ -170,6 +184,22 @@ function Inner() {
               </>
             )}
           </div>
+          {ups && ups.length > 0 && (
+            <div className="card stack ctxrev">
+              <h3 style={{ margin: 0 }}>Ho imparato qualcosa: aggiorno il tuo contesto?</h3>
+              <small>Niente cambia da solo: spunta ciò che è vero.</small>
+              {ups.map((u) => (
+                <label key={u.id} className="row" style={{ gap: 8, alignItems: "flex-start", flexWrap: "nowrap" }}>
+                  <input type="checkbox" style={{ width: "auto", marginTop: 3 }} checked={u.on} onChange={(e) => setUps(ups.map((y) => (y.id === u.id ? { ...y, on: e.target.checked } : y)))} />
+                  <span>{u.t}</span>
+                </label>
+              ))}
+              <div className="row" style={{ gap: 6 }}>
+                <button className="btn sm pri" onClick={async () => { await ws.saveVault(applyUpdates(ws.vault, ups)); setUps(null); }}>Aggiorna il contesto</button>
+                <button className="btn ghost sm" onClick={() => setUps(null)}>Non ora</button>
+              </div>
+            </div>
+          )}
           <Lessons />
           {ws.outcomes.map((o) => <OutcomeCard key={o.id} o={o} />)}
         </div>

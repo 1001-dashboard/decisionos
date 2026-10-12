@@ -3,6 +3,7 @@ import { useEffect, useMemo } from "react";
 import Link from "next/link";
 import { execPlan, type PlanItem } from "@/lib/execution";
 import { monitorOf, watchState } from "@/lib/monitor";
+import { aiContext } from "@/lib/context";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Printer, CheckCircle2, AlertTriangle, XCircle, ThumbsUp, ThumbsDown, Square } from "lucide-react";
 import { useWs } from "@/components/Workspace";
@@ -59,7 +60,8 @@ export default function Report() {
   const today = new Date().toLocaleDateString("it-IT", { day: "numeric", month: "long", year: "numeric" });
   const contro = m.ai?.contro;
   const ctxStr = ws.profile.ai_share.contesto ? Object.entries(ws.profile.context).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("; ") : undefined;
-  const controFresh = contro && contro.h === hashOf(compact(d, res, { eco: ws.profile.ai_share.economia, ctx: ctxStr, res: R }));
+  // stessa impronta della pagina della decisione: include il contesto realmente inviato
+  const controFresh = contro && contro.h === hashOf(compact(d, res, { eco: ws.profile.ai_share.economia, res: R, ...aiContext(ws.vault, d, { consent: m.cxAi ?? ws.profile.ai_share.contesto, eco: ws.profile.ai_share.economia, profile: ws.profile.context }) }));
   const cashRule = rules.find((r) => r.r === "cash_end" && r.min != null);
   const series = m.options.flatMap((o, i) => {
     const p = projection(o, R, rules);

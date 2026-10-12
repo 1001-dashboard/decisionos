@@ -1,7 +1,7 @@
 // Contesto personale («Cosa sa Decision OS di me»): elementi strutturati, confermati da te, usati in tutte le decisioni.
 // Ingresso: un documento nel formato qui sotto (lo prepara ChatGPT/Claude/Gemini con il prompt CONTEXT_PROMPT) letto
 // senza AI, oppure un testo libero estratto dall'Analista. Niente entra nel profilo finché non lo confermi.
-import { redactMoney, type Decision, type Crit, type Resources } from "./engine.ts";
+import { redactMoney, hashOf, type Decision, type Crit, type Resources, type Opt } from "./engine.ts";
 
 export type CtxKind = "fatto" | "risorsa" | "vincolo" | "obiettivo" | "valore" | "progetto" | "impegno" | "preferenza" | "incertezza" | "persona" | "regola" | "decisione";
 export const CTX_L: Record<CtxKind, string> = {
@@ -19,7 +19,57 @@ export const CTX_ONE: Record<CtxKind, string> = {
 export type CtxItem = {
   id: string; k: CtxKind; t: string; layer: "stabile" | "fase"; st: "proposto" | "confermato" | "superato" | "escluso";
   priv?: boolean; sens?: boolean; n?: number; u?: string; res?: string; imp?: number; src?: string; dt?: string; until?: string;
+  /** ambiti che l'elemento riguarda (se assenti: riconosciuti dal testo); global = vale per ogni decisione (es. un limite di liquidità) */
+  scope?: Scope[]; global?: boolean;
+  /** cosa influenza (risorse e ambiti su cui pesa: es. un progetto influenza tempo e soldi) */
+  affects?: Scope[];
+  /** relazioni con altri elementi: lo studio «richiede» Roma Est, il nuovo lavoro «consuma» tempo… */
+  links?: { to: string; rel: LinkRel }[];
+  /** affidabilità, separata dallo stato: un elemento può essere confermato ma vecchio, o attivo ma incerto */
+  conf?: "alta" | "media" | "bassa";
 };
+
+/* ---------- Ambiti e relazioni tra ambiti: il grafo minimo del contesto ---------- */
+export type LinkRel = "influenza" | "consuma" | "richiede" | "dipende" | "riguarda";
+export const LINK_L: Record<LinkRel, string> = { influenza: "influenza", consuma: "consuma", richiede: "richiede", dipende: "dipende da", riguarda: "riguarda" };
+export type Scope = "soldi" | "tempo" | "casa" | "luogo" | "famiglia" | "lavoro" | "progetti" | "salute" | "formazione" | "relazioni";
+export const SCOPE_L: Record<Scope, string> = { soldi: "soldi", tempo: "tempo", casa: "casa", luogo: "dove vivi", famiglia: "famiglia", lavoro: "lavoro", progetti: "progetti", salute: "salute", formazione: "formazione", relazioni: "relazioni" };
+const SCOPE_RE: Record<Scope, RegExp> = {
+  soldi: /liquid|risparm|reddit|stipend|soldi|€|\beur|capital|invest|affitt|mutuo|spes[ae]|cost[oi]|prezz|debit|nasp|ral\b|guadagn|margin|fattur|finanz|budget|entrat|netto/i,
+  tempo: /\bore\b|tempo|settiman|disponibilit|weekend|orari|part.?time|full.?time|impegn/i,
+  casa: /\bcasa|affitt|mutuo|propriet|abitaz|trasloc|appartament|alloggi/i,
+  luogo: /\broma\b|milano|torino|napoli|bologna|firenze|ibiza|spagna|estero|citt[aà]|trasfer|vicino|zona|quartier|resid|fuori\b|monastero|torraccia|lontan/i,
+  famiglia: /famigl|moglie|marito|figli|partner|asilo|genitor|madre|padre|sposat|bambin/i,
+  lavoro: /lavor|ruolo|posizion|contratt|aziend|carrier|candidat|colloqu|manager|impieg|assunz|offert|dipendent/i,
+  progetti: /progett|startup|piattaform|brand|lancio|prodotto/i,
+  salute: /salut|medic|malatt|terap|benesser|sonno|stress/i,
+  formazione: /master|corso|universit|formazion|certific|laurea|studiare/i,
+  relazioni: /amic|collega|relazion|fiducia|rapport|conflitt/i,
+};
+/** Ambiti collegati: una scelta che tocca il primo spesso tocca anche gli altri (relazione indiretta). */
+const SCOPE_NEXT: Record<Scope, Scope[]> = {
+  lavoro: ["soldi", "tempo", "luogo"], casa: ["soldi", "luogo", "famiglia"], luogo: ["casa", "famiglia", "lavoro"], famiglia: ["tempo", "luogo"],
+  progetti: ["tempo", "soldi"], soldi: [], tempo: ["progetti", "famiglia"], salute: ["tempo"], formazione: ["tempo", "soldi", "lavoro"], relazioni: [],
+};
+const TIPO_SCOPE: Record<string, Scope[]> = {
+  lavoro: ["lavoro", "soldi"], casa: ["casa", "soldi", "luogo"], acquisto: ["soldi"], soldi: ["soldi"], progetto: ["progetti", "tempo", "soldi"], fornitore: ["soldi", "progetti"],
+  persona: ["lavoro", "soldi"], auto: ["soldi"], studio: ["formazione", "tempo", "soldi"], famiglia: ["famiglia"], relazioni: ["relazioni"], morale: ["relazioni"], salute: ["salute"],
+};
+const RES_SCOPE: Record<string, Scope> = { cash0: "soldi", cash_m: "soldi", hours_w: "tempo" };
+export const autoScope = (t: string): Scope[] => (Object.keys(SCOPE_RE) as Scope[]).filter((k) => SCOPE_RE[k].test(t));
+export const scopesOf = (x: CtxItem): Scope[] => (x.scope?.length ? x.scope : [...new Set([...autoScope(x.t), ...(x.res ? [RES_SCOPE[x.res]] : []), ...(x.k === "progetto" ? ["progetti" as Scope] : [])])]);
+/** soldi e tempo toccano quasi tutto: da soli non bastano a rendere pertinente un fatto o un progetto */
+const GENERIC: Scope[] = ["soldi", "tempo"];
+/** Ambiti di una decisione: dal tipo, dalle risorse che le strade consumano e dalle parole del racconto. */
+export function decScopes(dec: Pick<Decision, "name" | "descr"> & { model?: Decision["model"] }): { direct: Scope[]; near: Scope[] } {
+  const m = dec.model;
+  const txt = [dec.name, dec.descr ?? "", ...(m?.options ?? []).map((o) => o.name), ...(m?.criteria ?? []).map((c) => c.name)].join(" ");
+  const res = (m?.options ?? []).flatMap((o) => (o.impacts ?? []).map((i) => RES_SCOPE[i.r])).filter(Boolean) as Scope[];
+  const direct = [...new Set([...(TIPO_SCOPE[m?.tipo ?? ""] ?? []), ...res, ...autoScope(txt)])];
+  // le relazioni indirette partono solo dagli ambiti specifici: «soldi» e «tempo» toccano tutto e allargherebbero troppo
+  const near = [...new Set(direct.filter((s) => s !== "soldi" && s !== "tempo").flatMap((s) => SCOPE_NEXT[s]))].filter((s) => !direct.includes(s));
+  return { direct, near };
+}
 
 /* ---------- Prompt da dare a un altro assistente ---------- */
 export const CONTEXT_PROMPT = `Preparami il mio profilo per Decision OS con tutto ciò che sai di me dalle nostre conversazioni.
@@ -27,7 +77,7 @@ Regole:
 - Scrivi SOLO cose che ti ho detto io. Se una cosa è una tua deduzione o non sei sicuro, mettila in DA VERIFICARE.
 - Una riga per elemento, breve e concreta. Niente commenti fuori dal formato.
 - Indica [stabile] per ciò che vale a lungo (valori, competenze, famiglia) e [fase] per ciò che vale adesso (liquidità di oggi, urgenze, progetti in corso).
-- Campi facoltativi dopo il simbolo |: n=numero unità · imp=1-5 (importanza) · data=AAAA-MM-GG (quando è stato detto) · fino=AAAA-MM-GG · risorsa=liquidita|mensile|ore · sensibile
+- Campi facoltativi dopo il simbolo |: n=numero unità · imp=1-5 (importanza) · data=AAAA-MM-GG (quando è stato detto) · fino=AAAA-MM-GG · risorsa=liquidita|mensile|ore · ambito=soldi,tempo,casa,luogo,famiglia,lavoro,progetti,salute,formazione,relazioni · globale (solo se vale per OGNI decisione, es. un limite di liquidità) · affidabilita=alta|media|bassa · sensibile
 - Non inventare cifre: se non le conosci, non scriverle.
 
 Formato esatto:
@@ -106,8 +156,12 @@ export function parseContext(text: string, src = "documento importato", today = 
       const rm = f.match(/^risorsa\s*=\s*(\S+)/i); if (rm) { const r = RES_MAP[norm(rm[1])]; if (r) it.res = r; continue; }
       const sm = f.match(/^fonte\s*=\s*(.+)$/i); if (sm) { it.src = sm[1].slice(0, 60); continue; }
       if (/sensibil/.test(fl)) { it.sens = true; it.priv = true; continue; }
+      if (/^global/.test(fl) || /vale per tutt/.test(fl)) { it.global = true; continue; }
+      const am = f.match(/^ambit[oi]\s*=\s*(.+)$/i); if (am) { const sc = am[1].split(/[,;\s]+/).map((z) => norm(z)).filter((z) => z in SCOPE_RE) as Scope[]; if (sc.length) it.scope = sc; continue; }
+      const cm = f.match(/^affidabilit[aà]\s*=\s*(alta|media|bassa)/i); if (cm) { it.conf = cm[1].toLowerCase() as CtxItem["conf"]; continue; }
       if (/privat/.test(fl)) { it.priv = true; continue; }
     }
+    if (k === "incertezza" && !it.conf) it.conf = "bassa";
     out.push(it);
   }
   return out;
@@ -136,27 +190,84 @@ export function mergeCtx(cur: CtxItem[], add: CtxItem[]): { items: CtxItem[]; du
 export const countBy = (items: CtxItem[]) => (Object.keys(CTX_L) as CtxKind[]).map((k) => ({ k, n: items.filter((x) => x.k === k).length })).filter((x) => x.n);
 
 /* ---------- Pertinenza: quali elementi riguardano questa decisione ---------- */
-const STOP = new Set("il lo la i gli le un una uno di da in con su per tra fra e o ma se che non piu più mi ti si ci vi del della dei delle al alla ai agli nel nella sono essere ho hai ha abbiamo come anche solo molto poco questo questa quello quella mio mia miei mie suo sua oggi".split(" "));
+const STOP = new Set("il lo la i gli le un una uno di da in con su per tra fra e o ma se che non piu più mi ti si ci vi del della dei delle al alla ai agli nel nella sono essere ho hai ha abbiamo come anche solo molto poco questo questa quello quella mio mia miei mie suo sua oggi personale piattaforma decisione decisioni scelta scelte cosa fare vita voglio posso devo nata pensata diventare essere avere quanto quale quali quando dove perche perché devo dovrei potrei vorrei sarebbe decidere decido deciso scegliere scelgo".split(" "));
 const toks = (s: string) => new Set(norm(s).replace(/[^a-z0-9 ]/g, " ").split(" ").filter((w) => w.length > 3 && !STOP.has(w)).map((w) => w.slice(0, 6)));
 const overlap = (a: Set<string>, b: Set<string>) => { let n = 0; for (const x of a) if (b.has(x)) n++; return n; };
-/** Elementi utilizzabili: confermati, ancora veri, non esclusi. */
-export const usable = (items: CtxItem[]) => items.filter((x) => x.st === "confermato");
-const ALWAYS: CtxKind[] = ["vincolo", "regola"];
+const inter = <T,>(a: T[], b: T[]) => a.filter((x) => b.includes(x)).length;
+/** Elementi utilizzabili: confermati e non scaduti. Una scadenza esplicita passata li toglie dall'uso finché non li riconfermi;
+ *  i dati della fase attuale vecchi di 6 mesi restano usabili ma vengono segnalati. */
+export const expired = (x: CtxItem, now = new Date().toISOString().slice(0, 10)) => !!x.until && x.until < now;
+export const usable = (items: CtxItem[], now = new Date().toISOString().slice(0, 10)) => items.filter((x) => x.st === "confermato" && !expired(x, now));
+const STRONG: CtxKind[] = ["vincolo", "regola", "risorsa", "valore", "obiettivo"];
 
-/** Elementi pertinenti a una decisione: parole in comune con titolo, racconto, strade e criteri; vincoli e regole sempre. */
-export function relevantCtx(items: CtxItem[], dec: Pick<Decision, "name" | "descr"> & { model?: Decision["model"] }, limit = 15, off: string[] = []): CtxItem[] {
+export type CtxHit = { x: CtxItem; s: number; via: "globale" | "diretto" | "indiretto" | "parole" | "collegato"; from?: string; rel?: LinkRel };
+/** Pertinenza a una decisione, in quest'ordine: vale per tutte (globale), stesso ambito (diretto), ambito collegato (indiretto),
+ *  parole in comune; poi importanza e freschezza. Vincoli e regole non sono più sempre pertinenti: solo se globali o nello stesso ambito. */
+export function rankCtx(items: CtxItem[], dec: Pick<Decision, "name" | "descr"> & { model?: Decision["model"] }, off: string[] = [], now = new Date().toISOString().slice(0, 10)): CtxHit[] {
   const txt = [dec.name, dec.descr ?? "", ...(dec.model?.options ?? []).map((o) => o.name), ...(dec.model?.criteria ?? []).map((c) => c.name)].join(" ");
   const tk = toks(txt);
-  const sc = usable(items).filter((x) => !off.includes(x.id)).map((x) => {
-    const ov = overlap(toks(x.t), tk);
-    return { x, s: ov * 3 + (ALWAYS.includes(x.k) ? 2 : 0) + (x.layer === "fase" ? 1 : 0) + (x.k === "risorsa" ? 1 : 0) };
-  }).filter((y) => y.s >= 3 || ALWAYS.includes(y.x.k));
-  return sc.sort((a, b) => b.s - a.s).slice(0, limit).map((y) => y.x);
+  const { direct, near } = decScopes(dec);
+  const out: CtxHit[] = [];
+  const pool = usable(items, now).filter((x) => !off.includes(x.id));
+  for (const x of pool) {
+    const sc = [...new Set([...scopesOf(x), ...(x.affects ?? [])])];
+    const d = inter(sc, direct), n = inter(sc, near), lex = overlap(toks(x.t), tk);
+    const old = (x.until && x.until < now) || (x.layer === "fase" && x.dt && (Date.parse(now) - Date.parse(x.dt)) / 86400000 > 180);
+    const strong = STRONG.includes(x.k);
+    const spec = sc.filter((z) => !GENERIC.includes(z));
+    const dS = inter(spec, direct), nS = inter(spec, near);
+    const onlyGeneric = sc.length > 0 && !spec.length;
+    let via: CtxHit["via"] | null = null;
+    if (x.global) via = "globale";
+    else if (strong) {
+      // vincoli, regole, risorse, valori, obiettivi: stesso ambito specifico, oppure parole in comune, oppure un limite su soldi/tempo in una scelta che li tocca
+      if (dS || lex) via = "diretto";
+      else if (onlyGeneric && (d || n)) via = d ? "diretto" : "indiretto";
+      else if (nS && ((x.imp ?? 3) >= 4 || x.k === "vincolo" || x.k === "risorsa")) via = "indiretto";
+    } else {
+      // fatti, progetti, persone, incertezze: servono parole in comune o più ambiti specifici
+      if (lex >= 2 || (lex && d)) via = "parole";
+      else if (dS >= 2) via = "diretto";
+      else if (dS && nS && (x.k === "fatto" || x.k === "impegno")) via = "indiretto";
+    }
+    if (!via) continue;
+    // un'altra decisione in sospeso è pertinente solo se ne parla davvero
+    if (x.k === "decisione" && lex < 1) continue;
+    const s = (x.global ? 6 : 0) + dS * 3 + (d - dS) + n + lex * 2 + (strong ? 1 : 0) + (x.imp ?? 0) / 5 + (x.layer === "fase" ? 0.5 : 0) - (old ? 1 : 0) - (x.conf === "bassa" ? 0.5 : 0);
+    out.push({ x, s, via });
+  }
+  // relazioni esplicite: un elemento collegato a uno pertinente entra anche lui (un passo, nei due versi)
+  const inn = new Map(out.map((h) => [h.x.id, h]));
+  for (const h of [...out].sort((a, b) => b.s - a.s)) {
+    const nb = [
+      ...(h.x.links ?? []).map((l) => ({ id: l.to, rel: l.rel })),
+      ...pool.filter((y) => (y.links ?? []).some((l) => l.to === h.x.id)).map((y) => ({ id: y.id, rel: (y.links ?? []).find((l) => l.to === h.x.id)!.rel })),
+    ];
+    for (const { id, rel } of nb) {
+      if (inn.has(id)) continue;
+      const y = pool.find((z) => z.id === id);
+      if (!y || (y.k === "decisione")) continue;
+      const hh: CtxHit = { x: y, s: h.s * 0.6, via: "collegato", from: h.x.t, rel };
+      inn.set(id, hh); out.push(hh);
+    }
+  }
+  return out.sort((a, b) => b.s - a.s);
+}
+
+/** Contesto per una richiesta all'AI, in un punto solo: senza consenso niente contesto personale né priorità.
+ *  Restituisce i campi da passare a compact() (e lo stesso oggetto serve all'impronta che dice se un parere è ancora attuale). */
+export function aiContext(items: CtxItem[], dec: Pick<Decision, "name" | "descr"> & { model?: Decision["model"] }, o: { consent: boolean; eco: boolean; profile?: Record<string, string> }): { ctx?: string; cx?: string[]; cxok?: boolean } {
+  if (!o.consent) return {};
+  const ctx = o.profile ? Object.entries(o.profile).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("; ") || undefined : undefined;
+  return { ctx, cx: ctxForAi(relevantCtx(items, dec, 15, dec.model?.cxOff ?? []), o.eco), cxok: true };
+}
+export function relevantCtx(items: CtxItem[], dec: Pick<Decision, "name" | "descr"> & { model?: Decision["model"] }, limit = 15, off: string[] = []): CtxItem[] {
+  return rankCtx(items, dec, off).slice(0, limit).map((h) => h.x);
 }
 
 /** Righe da inviare all'AI: niente elementi privati o sensibili; importi oscurati senza consenso. */
 export function ctxForAi(items: CtxItem[], eco: boolean): string[] {
-  return items.filter((x) => !x.priv && !x.sens).map((x) => `[${CTX_ONE[x.k]}${x.layer === "fase" ? ", oggi" : ""}] ${eco ? x.t : redactMoney(x.t)}${x.n != null && (eco || !/€|eur/i.test(x.u ?? "")) ? `: ${x.n}${x.u ? " " + x.u : ""}` : ""}${x.imp ? ` (importanza ${x.imp}/5)` : ""}`);
+  return items.filter((x) => !x.priv && !x.sens).map((x) => `[${CTX_ONE[x.k]}${x.layer === "fase" ? ", oggi" : ""}] ${eco ? x.t : redactMoney(x.t)}${x.n != null && (eco || !/€|eur/i.test(x.u ?? "")) ? `: ${x.n}${x.u ? " " + x.u : ""}` : ""}${x.imp ? ` (importanza ${x.imp}/5)` : ""}${x.conf === "bassa" ? " (da verificare)" : ""}`);
 }
 
 /* ---------- Suggerimenti sui pesi: il contesto propone, non decide ---------- */
@@ -172,7 +283,9 @@ export function critHints(items: CtxItem[], crit: Crit[]): CritHint[] {
     if (x.k === "vincolo" || x.k === "regola")
       out.push({ crit: c.id, item: x, asConstraint: true, text: `Nel tuo contesto «${x.t}» è un ${CTX_ONE[x.k]}: forse non va pesato come criterio ma messo come requisito non negoziabile.` });
     else if (x.imp && x.imp !== (c.imp ?? 3))
-      out.push({ crit: c.id, item: x, imp: x.imp, text: `Dal tuo contesto «${x.t}» ha importanza ${x.imp}/5: vuoi partire da ${x.imp}/5?` });
+      out.push({ crit: c.id, item: x, imp: x.imp, text: x.layer === "stabile"
+        ? `Normalmente dai a «${x.t}» importanza ${x.imp}/5. In questa decisione vuoi partire da ${x.imp}/5?`
+        : `In questa fase hai dichiarato «${x.t}» con importanza ${x.imp}/5: vuoi partire da ${x.imp}/5 anche qui?` });
   }
   return out;
 }
@@ -194,8 +307,11 @@ export function contextPicture(items: CtxItem[], decisions: Decision[], now = ne
     if (ds.length >= 2) out.push(`${x.k === "incertezza" ? "L'incertezza" : "Il progetto"} «${x.t}» tocca ${ds.length} decisioni aperte: ${ds.map((d) => `«${d.name}»`).join(", ")}.`);
   }
   // elementi da aggiornare
-  const old = usable(items).filter((x) => (x.until && x.until < now) || (x.layer === "fase" && x.dt && (Date.parse(now) - Date.parse(x.dt)) / 86400000 > 180));
-  if (old.length) out.push(`${old.length} ${old.length === 1 ? "elemento della fase attuale non è" : "elementi della fase attuale non sono"} aggiornati da oltre 6 mesi o sono scaduti: ${old.slice(0, 3).map((x) => `«${x.t}»`).join(", ")}${old.length > 3 ? "…" : ""}.`);
+  const conf = items.filter((x) => x.st === "confermato");
+  const exp = conf.filter((x) => expired(x, now));
+  if (exp.length) out.push(`${exp.length} ${exp.length === 1 ? "elemento è scaduto e non viene più usato" : "elementi sono scaduti e non vengono più usati"} finché non ${exp.length === 1 ? "lo riconfermi" : "li riconfermi"}: ${exp.slice(0, 3).map((x) => `«${x.t}»`).join(", ")}${exp.length > 3 ? "…" : ""}.`);
+  const old = usable(items, now).filter((x) => x.layer === "fase" && x.dt && (Date.parse(now) - Date.parse(x.dt)) / 86400000 > 180);
+  if (old.length) out.push(`${old.length} ${old.length === 1 ? "elemento della fase attuale non è aggiornato" : "elementi della fase attuale non sono aggiornati"} da oltre 6 mesi: ${old.slice(0, 3).map((x) => `«${x.t}»`).join(", ")}${old.length > 3 ? "…" : ""}. Vengono ancora usati: verificali.`);
   const pend = items.filter((x) => x.st === "proposto").length;
   if (pend) out.push(`${pend} ${pend === 1 ? "elemento importato aspetta" : "elementi importati aspettano"} la tua conferma: finché non li confermi non li uso.`);
   return out;
@@ -203,3 +319,39 @@ export function contextPicture(items: CtxItem[], decisions: Decision[], now = ne
 
 /** Elementi «risorsa» con un numero e una risorsa riconosciuta: possono aggiornare le tue risorse di partenza. */
 export const resUpdates = (items: CtxItem[], res: Resources) => usable(items).filter((x) => x.k === "risorsa" && x.res && x.n != null && res[x.res] !== x.n);
+
+/* ---------- Fotografia del contesto e aggiornamenti dopo una decisione ---------- */
+/** Cosa sapeva Decision OS quando hai deciso: fra un anno potrai distinguere una cattiva decisione da una decisione giusta con le informazioni di allora. */
+export function ctxSnapshot(items: CtxItem[], dec: Decision): { n: number; t: string[]; h: string } {
+  const used = relevantCtx(items, dec, 15, dec.model.cxOff ?? []);
+  return { n: used.length, t: used.map((x) => `[${CTX_ONE[x.k]}] ${x.t}`), h: ctxVersion(items) };
+}
+/** Versione del contesto: impronta degli elementi utilizzabili. Cambia se aggiungi, modifichi, superi o fai scadere qualcosa. */
+export const ctxVersion = (items: CtxItem[]) => hashOf(usable(items).map((x) => `${x.k}|${x.t}|${x.n ?? ""}|${x.layer}`).sort());
+/** Contesto da congelare nell'analisi: versione e solo gli elementi effettivamente usati, con il motivo per cui erano pertinenti. */
+export function ctxFreeze(items: CtxItem[], dec: Decision): { version: string; items: { k: CtxKind; t: string; n?: number; u?: string; via: string; priv?: boolean }[] } {
+  return { version: ctxVersion(items), items: rankCtx(items, dec, dec.model.cxOff ?? []).slice(0, 15).map((h) => ({ k: h.x.k, t: h.x.t, ...(h.x.n != null ? { n: h.x.n, u: h.x.u } : {}), via: h.via, ...(h.x.priv || h.x.sens ? { priv: true } : {}) })) };
+}
+
+export type CtxUpdate = { id: string; t: string; on: boolean } & ({ kind: "supera"; item: string } | { kind: "nuovo"; item: CtxItem });
+/** Cosa la decisione presa ha insegnato al contesto. Mai applicato da solo: lo proponi tu, lo confermi tu. */
+export function contextUpdates(items: CtxItem[], dec: Decision, ch: Opt, res: Resources = {}, now = new Date().toISOString().slice(0, 10)): CtxUpdate[] {
+  const out: CtxUpdate[] = [];
+  const tk = toks([dec.name, dec.descr ?? "", ch.name].join(" "));
+  for (const x of usable(items).filter((y) => y.k === "decisione" && overlap(toks(y.t), tk) >= 1))
+    out.push({ id: "s" + x.id, kind: "supera", item: x.id, t: `«${x.t}»: è stata decisa, non è più in sospeso`, on: true });
+  const it = (k: CtxKind, t: string, extra: Partial<CtxItem> = {}): CtxItem => ({ id: nid(), k, t, layer: "fase", st: "confermato", src: `decisione «${dec.name}»`, dt: now, ...extra });
+  out.push({ id: "f", kind: "nuovo", item: it("fatto", `Ho scelto «${ch.name}» (decisione «${dec.name}»)`), t: `Nuovo fatto: ho scelto «${ch.name}»`, on: true });
+  const v = (r: string) => { const i = (ch.impacts ?? []).find((z) => z.r === r); return i == null ? null : Array.isArray(i.v) ? i.v[1] : i.v; };
+  const h = v("hours_w");
+  if (h) { const n = Math.max(0, (res.hours_w ?? 0) + h); out.push({ id: "h", kind: "nuovo", item: it("risorsa", `Ore libere a settimana dopo «${ch.name}»`, { n, u: "ore", res: "hours_w" }), t: `Ore libere a settimana: da ${res.hours_w ?? 0} a circa ${n}`, on: true }); }
+  const m = v("cash_m");
+  if (m) { const n = (res.cash_m ?? 0) + m; out.push({ id: "m", kind: "nuovo", item: it("risorsa", `Flusso mensile dopo «${ch.name}»`, { n, u: "€/mese", res: "cash_m" }), t: `Flusso mensile: da ${res.cash_m ?? 0} a circa ${n} €`, on: true }); }
+  return out;
+}
+/** Applica gli aggiornamenti scelti: superati e nuovi elementi, confermati da te. */
+export function applyUpdates(items: CtxItem[], ups: CtxUpdate[]): CtxItem[] {
+  let out = items.map((x) => (ups.some((u) => u.on && u.kind === "supera" && u.item === x.id) ? { ...x, st: "superato" as const } : x));
+  out = mergeCtx(out, ups.filter((u) => u.on && u.kind === "nuovo").map((u) => (u as { item: CtxItem }).item)).items;
+  return out;
+}

@@ -110,6 +110,8 @@ export type Model = {
   rinvii?: number;
   /** elementi del contesto personale che hai escluso da questa decisione */
   cxOff?: string[];
+  /** consenso a inviare contesto e priorità all'Analista per questa decisione (se assente vale quello delle Impostazioni) */
+  cxAi?: boolean;
   /** riaperture: quando e perché una decisione presa è tornata aperta */
   reopened?: { at: string; why: string }[];
 };
@@ -1117,6 +1119,8 @@ export type Pred = {
   cap: number | null; irr: boolean | null;   // capitale a rischio e se era difficile da invertire
   kd?: PlanKind;
   rs: { id: string; t: string; p: RiskP; tot: number }[];   // rischi previsti, impatto se succede
+  /** contesto che Decision OS conosceva quando hai deciso: testi degli elementi usati e impronta del contesto confermato */
+  cx?: { n: number; t: string[]; h: string };
 };
 /** Cosa è successo davvero, con gli stessi campi della previsione. hit: rischio → impatto reale in € (0 = successo senza costi); assente = non è successo. ok = esito 1-5. */
 export type Act = { c0?: number | null; m?: number | null; hit?: Record<string, number>; ok?: number | null };

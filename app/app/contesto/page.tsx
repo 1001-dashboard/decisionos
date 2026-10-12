@@ -6,15 +6,18 @@ import { useWs } from "@/components/Workspace";
 import { Top } from "@/components/Shell";
 import { ai } from "@/lib/ai";
 import { redactMoney, fmt } from "@/lib/engine";
-import { CONTEXT_PROMPT, CTX_L, CTX_ONE, parseContext, ctxFromAi, mergeCtx, countBy, contextPicture, resUpdates, type CtxItem, type CtxKind, type AiCtx } from "@/lib/context";
+import { CONTEXT_PROMPT, CTX_L, CTX_ONE, SCOPE_L, LINK_L, scopesOf, expired, type Scope, type LinkRel, parseContext, ctxFromAi, mergeCtx, countBy, contextPicture, resUpdates, type CtxItem, type CtxKind, type AiCtx } from "@/lib/context";
 
 const KINDS = Object.keys(CTX_L) as CtxKind[];
 const RES_L: Record<string, string> = { cash0: "liquidità", cash_m: "flusso mensile", hours_w: "ore libere a settimana" };
 
 /** Una riga del contesto: testo modificabile, tipo, fase/stabile, privato, stato. */
-function Item({ x, set, del, review }: { x: CtxItem; set: (pt: Partial<CtxItem>) => void; del: () => void; review?: boolean }) {
+function Item({ x, set, del, review, all }: { x: CtxItem; set: (pt: Partial<CtxItem>) => void; del: () => void; review?: boolean; all: CtxItem[] }) {
+  const exp = expired(x);
+  const [lt, setLt] = useState(""), [lr, setLr] = useState<LinkRel>("influenza");
+  const others = all.filter((y) => y.id !== x.id && y.st !== "superato");
   return (
-    <div className={`ctxi ${x.st}`}>
+    <div className={`ctxi ${x.st} ${exp ? "exp" : ""}`}>
       <div className="row" style={{ gap: 6, flexWrap: "nowrap", alignItems: "flex-start" }}>
         <select aria-label="Tipo" value={x.k} onChange={(e) => set({ k: e.target.value as CtxKind })} style={{ width: "auto" }}>{KINDS.map((k) => <option key={k} value={k}>{CTX_ONE[k]}</option>)}</select>
         <input aria-label="Elemento" defaultValue={x.t} onBlur={(e) => e.target.value.trim() && e.target.value !== x.t && set({ t: e.target.value.trim() })} style={{ flex: 1, minWidth: 0 }} />
@@ -25,6 +28,9 @@ function Item({ x, set, del, review }: { x: CtxItem; set: (pt: Partial<CtxItem>)
           <button className={x.layer === "fase" ? "on" : ""} onClick={() => set({ layer: "fase" })}>Fase attuale</button>
         </span>
         {x.n != null && <span className="pill info">{fmt(x.n)}{x.u ? " " + x.u : ""}</span>}
+        <select aria-label="Affidabilità" value={x.conf ?? ""} onChange={(e) => set({ conf: (e.target.value || undefined) as CtxItem["conf"] })} style={{ width: "auto", padding: "4px 8px", fontSize: 13 }}>
+          <option value="">affidabilità?</option><option value="alta">affidabile</option><option value="media">abbastanza</option><option value="bassa">da verificare</option>
+        </select>
         {x.imp && <span className="pill info">importanza {x.imp}/5</span>}
         <button className={`btn ghost sm ${x.priv ? "on" : ""}`} title="Privato: mai inviato all'AI" onClick={() => set({ priv: !x.priv })}>{x.priv ? <Lock size={13} /> : <Unlock size={13} />} {x.priv ? "Privato" : "Inviabile all'AI"}</button>
         {review ? <>
@@ -36,8 +42,34 @@ function Item({ x, set, del, review }: { x: CtxItem; set: (pt: Partial<CtxItem>)
           {x.st !== "confermato" && <button className="btn ghost sm" onClick={() => set({ st: "confermato" })}>Usa di nuovo</button>}
           <button className="iconbtn" title="Elimina" onClick={del}><Trash2 size={14} /></button>
         </>}
-        <small className="muted">{[x.src, x.dt ? new Date(x.dt).toLocaleDateString("it-IT") : "", x.until ? `fino al ${new Date(x.until).toLocaleDateString("it-IT")}` : ""].filter(Boolean).join(" · ")}</small>
+        <span className="scopes" aria-label="Ambiti">
+          {scopesOf(x).map((z) => <button key={z} className="pill teal" title="Togli l'ambito" onClick={() => set({ scope: scopesOf(x).filter((y) => y !== z) })}>{SCOPE_L[z]} ×</button>)}
+          <select aria-label="Aggiungi ambito" value="" onChange={(e) => e.target.value && set({ scope: [...scopesOf(x), e.target.value as Scope] })} style={{ width: "auto", padding: "3px 6px", fontSize: 12 }}>
+            <option value="">+ ambito</option>{(Object.keys(SCOPE_L) as Scope[]).filter((z) => !scopesOf(x).includes(z)).map((z) => <option key={z} value={z}>{SCOPE_L[z]}</option>)}
+          </select>
+          <label className="row" style={{ gap: 4, fontSize: 12 }}><input type="checkbox" style={{ width: "auto" }} checked={!!x.global} onChange={(e) => set({ global: e.target.checked || undefined })} /> vale per tutte le decisioni</label>
+        </span>
+        <small className="muted">{[x.src, x.dt ? new Date(x.dt).toLocaleDateString("it-IT") : ""].filter(Boolean).join(" · ")}</small>
+        <label className="row" style={{ gap: 4, fontSize: 12 }}>vale fino al<input aria-label="Valido fino al" type="date" value={x.until ?? ""} onChange={(e) => set({ until: e.target.value || undefined })} style={{ width: "auto", padding: "3px 6px", fontSize: 12 }} /></label>
+        {exp && <><span className="pill bad">scaduto: non viene più usato</span><button className="btn sm" onClick={() => set({ until: undefined, dt: new Date().toISOString().slice(0, 10) })}>Riconferma</button></>}
       </div>
+      {!review && (
+        <div className="row" style={{ gap: 6, marginTop: 6, alignItems: "center" }}>
+          <span className="scopes" aria-label="Influenza">
+            <small className="muted">influenza:</small>
+            {(x.affects ?? []).map((z) => <button key={z} className="pill info" title="Togli" onClick={() => set({ affects: (x.affects ?? []).filter((y) => y !== z) })}>{SCOPE_L[z]} ×</button>)}
+            <select aria-label="Aggiungi influenza" value="" onChange={(e) => e.target.value && set({ affects: [...(x.affects ?? []), e.target.value as Scope] })} style={{ width: "auto", padding: "3px 6px", fontSize: 12 }}>
+              <option value="">+ risorsa o ambito</option>{(Object.keys(SCOPE_L) as Scope[]).filter((z) => !(x.affects ?? []).includes(z)).map((z) => <option key={z} value={z}>{SCOPE_L[z]}</option>)}
+            </select>
+          </span>
+          <span className="scopes" aria-label="Collegamenti">
+            {(x.links ?? []).map((l) => { const y = all.find((z) => z.id === l.to); return y ? <button key={l.to + l.rel} className="pill teal" title="Togli il collegamento" onClick={() => set({ links: (x.links ?? []).filter((z) => !(z.to === l.to && z.rel === l.rel)) })}>{LINK_L[l.rel]} «{y.t.slice(0, 40)}» ×</button> : null; })}
+            <select aria-label="Relazione" value={lr} onChange={(e) => setLr(e.target.value as LinkRel)} style={{ width: "auto", padding: "3px 6px", fontSize: 12 }}>{(Object.keys(LINK_L) as LinkRel[]).map((r) => <option key={r} value={r}>{LINK_L[r]}</option>)}</select>
+            <select aria-label="Collega a" value={lt} onChange={(e) => setLt(e.target.value)} style={{ width: "auto", maxWidth: 220, padding: "3px 6px", fontSize: 12 }}><option value="">collega a…</option>{others.map((y) => <option key={y.id} value={y.id}>{y.t.slice(0, 50)}</option>)}</select>
+            <button className="btn ghost sm" disabled={!lt} onClick={() => { set({ links: [...(x.links ?? []).filter((z) => z.to !== lt), { to: lt, rel: lr }] }); setLt(""); }}>Collega</button>
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -61,7 +93,7 @@ export default function Contesto() {
 
   const save = (items: CtxItem[]) => saveVault(items);
   const set = (id: string, pt: Partial<CtxItem>) => save(vault.map((x) => (x.id === id ? { ...x, ...pt } : x)));
-  const del = (id: string) => save(vault.filter((x) => x.id !== id));
+  const del = (id: string) => save(vault.filter((x) => x.id !== id).map((x) => (x.links?.some((l) => l.to === id) ? { ...x, links: x.links.filter((l) => l.to !== id) } : x)));
   const found = (add: CtxItem[], how: string) => {
     if (!add.length) { setMsg(how === "doc" ? "Non ho trovato sezioni nel formato di Decision OS. Se è un testo libero, usa «Estrai con l'Analista»." : "L'Analista non ha trovato elementi."); return; }
     const m = mergeCtx(vault, add);
@@ -118,7 +150,7 @@ export default function Contesto() {
               {KINDS.filter((k) => pend.some((x) => x.k === k)).map((k) => (
                 <div key={k} className="stack" style={{ gap: 6 }}>
                   <div className="cgrp">{CTX_L[k]} · {pend.filter((x) => x.k === k).length}</div>
-                  {pend.filter((x) => x.k === k).map((x) => <Item key={x.id} x={x} set={(pt) => set(x.id, pt)} del={() => del(x.id)} review />)}
+                  {pend.filter((x) => x.k === k).map((x) => <Item key={x.id} x={x} set={(pt) => set(x.id, pt)} del={() => del(x.id)} review all={vault} />)}
                 </div>
               ))}
             </div>
@@ -150,7 +182,7 @@ export default function Contesto() {
               ))}
             </div>
             {!list.length && <small className="muted">Niente qui.</small>}
-            {list.map((x) => <Item key={x.id} x={x} set={(pt) => set(x.id, pt)} del={() => del(x.id)} />)}
+            {list.map((x) => <Item key={x.id} x={x} set={(pt) => set(x.id, pt)} del={() => del(x.id)} all={vault} />)}
             <div className="row" style={{ gap: 6 }}>
               <select aria-label="Tipo del nuovo elemento" value={nk} onChange={(e) => setNk(e.target.value as CtxKind)} style={{ width: "auto" }}>{KINDS.map((k) => <option key={k} value={k}>{CTX_ONE[k]}</option>)}</select>
               <input aria-label="Nuovo elemento" placeholder="Aggiungi a mano: es. non uso più del 30% dei risparmi per un progetto" value={nt} onChange={(e) => setNt(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addOne()} style={{ flex: "1 1 220px" }} />
