@@ -6,6 +6,7 @@ import { useWs } from "@/components/Workspace";
 import { Top } from "@/components/Shell";
 import { ai, compact } from "@/lib/ai";
 import { analyzeDecision, uid } from "@/lib/engine";
+import { relevantCtx, ctxForAi } from "@/lib/context";
 
 const MODES = [
   { k: "dati", l: "Analisi dei dati", d: "Fatti, stime, mancanze, contraddizioni", i: ListChecks },
@@ -16,7 +17,7 @@ type Out = { p?: string[]; c?: string };
 
 function Inner() {
   const q = useSearchParams();
-  const { decisions, profile, saveDecision } = useWs();
+  const { decisions, profile, saveDecision, vault } = useWs();
   const open = decisions.filter((d) => d.status !== "archiviata");
   const [id, setId] = useState(q.get("d") ?? open[0]?.id ?? "");
   const [eco, setEco] = useState(profile.ai_share.economia);
@@ -28,8 +29,8 @@ function Inner() {
   const payload = useMemo(() => {
     if (!d) return null;
     const c = ctx ? Object.entries(profile.context).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("; ") : undefined;
-    return compact(d, analyzeDecision(d), { eco, ctx: c, res: profile.resources });
-  }, [d, eco, ctx, profile]);
+    return compact(d, analyzeDecision(d), { eco, ctx: c, res: profile.resources, cx: ctxForAi(relevantCtx(vault, d, 15, d.model.cxOff ?? []), eco) });
+  }, [d, eco, ctx, profile, vault]);
 
   async function run(mode: string) {
     if (!payload) return;

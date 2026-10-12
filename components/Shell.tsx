@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, GitFork, Link2, TrendingUp, Bot, History, Settings, LogOut, X } from "lucide-react";
+import { LayoutDashboard, GitFork, Link2, TrendingUp, Bot, History, Settings, LogOut, X, UserRound } from "lucide-react";
 import { useWs } from "./Workspace";
 import { sb } from "@/lib/supabase/client";
 import { BP } from "@/lib/bp";
@@ -13,6 +13,7 @@ export const NAV = [
   { h: "/app/scenari", l: "Scenari", s: "Simula il futuro", i: TrendingUp },
   { h: "/app/analista", l: "Analista AI", s: "Analisi critica", i: Bot },
   { h: "/app/registro", l: "Registro", s: "Risultati nel tempo", i: History },
+  { h: "/app/contesto", l: "Contesto", s: "Cosa sa di te", i: UserRound, m: false },
   { h: "/app/impostazioni", l: "Impostazioni", s: "Profilo e risorse", i: Settings },
 ];
 
@@ -40,7 +41,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         </main>
       </div>
       <nav className="bottomnav">
-        {NAV.map(({ h, l, i: I }) => <Link key={h} href={h} className={on(h) ? "on" : ""}><I size={20} />{({ Panoramica: "Home", Connessioni: "Legami", "Analista AI": "Analista", Impostazioni: "Profilo" } as Record<string, string>)[l] ?? l}</Link>)}
+        {NAV.filter((x) => x.m !== false).map(({ h, l, i: I }) => <Link key={h} href={h} className={on(h) ? "on" : ""}><I size={20} />{({ Panoramica: "Home", Connessioni: "Legami", "Analista AI": "Analista", Impostazioni: "Profilo" } as Record<string, string>)[l] ?? l}</Link>)}
       </nav>
     </div>
   );

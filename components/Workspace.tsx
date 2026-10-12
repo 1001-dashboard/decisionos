@@ -1,7 +1,8 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { sb } from "@/lib/supabase/client";
-import type { Decision, Dep, Resources, Rule } from "@/lib/engine";
+import type { Decision, Dep, Resources, Rule, Pred, Act } from "@/lib/engine";
+import type { CtxItem } from "@/lib/context";
 import { PRI_DEFAULT } from "@/lib/priorities";
 
 export type Profile = {
@@ -19,6 +20,7 @@ export type SnapInput = { decisions: Decision[]; deps: Dep[]; resources: Resourc
 export type Outcome = {
   id: string; decision_id: string | null; decision_name: string; chosen: string; chosen_id?: string | null; decided_at: string;
   expected?: string | null; review_at?: string | null; observed?: string | null; cause?: string | null; snapshot_id?: string | null;
+  pred?: Pred | null; act?: Act | null;   // previsione al momento della scelta e consuntivo
 };
 export type Dec = Decision & { updated_at?: string; created_at?: string };
 
@@ -48,6 +50,9 @@ type Ctx = {
   createSnapshot: (label: string, input: SnapInput, result: unknown) => Promise<void>;
   deleteSnapshot: (id: string) => Promise<void>;
   saveOutcome: (o: Partial<Outcome>) => Promise<void>;
+  /** contesto personale: elementi confermati da te, usati in tutte le decisioni */
+  vault: CtxItem[];
+  saveVault: (items: CtxItem[]) => Promise<boolean>;
   deleteOutcome: (id: string) => Promise<void>;
   wipe: () => Promise<void>;
   setErr: (e: string | null) => void;
@@ -67,6 +72,7 @@ export default function Workspace({ children }: { children: React.ReactNode }) {
   const [deps, setDeps] = useState<Dep[]>([]);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
+  const [vault, setVault] = useState<CtxItem[]>([]);
 
   const chk = useCallback(<T,>(r: { error: { message: string } | null; data?: T }) => {
     if (r.error) { setErr(r.error.message); throw new Error(r.error.message); }
@@ -88,7 +94,8 @@ export default function Workspace({ children }: { children: React.ReactNode }) {
       ]);
       const e = [p, d, dp, sn, oc].find((x) => x.error);
       if (e?.error) { setErr(`${e.error.message}. Hai eseguito supabase/schema.sql?`); setReady(true); return; }
-      if (p.data) setProfile({ ...DEF_PROFILE, ...p.data, priorities: { ...PRI_DEFAULT, ...(p.data.priorities ?? {}) } });
+      // il contesto ha una colonna sua: resta fuori dal profilo, così il profilo si salva anche se la colonna non esiste ancora
+      if (p.data) { const { vault: vt, ...pd } = p.data as Profile & { vault?: CtxItem[] }; setVault(Array.isArray(vt) ? vt : []); setProfile({ ...DEF_PROFILE, ...pd, priorities: { ...PRI_DEFAULT, ...(pd.priorities ?? {}) } }); }
       else await s.from("profiles").insert({ id: user.id, ...DEF_PROFILE });
       setDecisions((d.data ?? []).map((x: Dec) => ({ ...x, model: { ...({ criteria: [], constraints: [], options: [], assumptions: [] } as Dec["model"]), ...(x.model as Partial<Dec["model"]>) } })));
       setDeps((dp.data ?? []).map((x: { id: string; rule: Dep; confirmed: boolean }) => ({ ...x.rule, id: x.id, confirmed: x.confirmed })));
@@ -99,7 +106,7 @@ export default function Workspace({ children }: { children: React.ReactNode }) {
   }, []);
 
   const v = useMemo<Ctx>(() => ({
-    ready, err, email, profile, decisions, deps, snapshots, outcomes, setErr,
+    ready, err, email, profile, decisions, deps, snapshots, outcomes, vault, setErr,
     async saveProfile(pt) {
       const n = { ...profile, ...pt };
       setProfile(n);
@@ -154,10 +161,21 @@ export default function Workspace({ children }: { children: React.ReactNode }) {
       } else {
         let r = await sb().from("outcomes").insert(o).select().single();
         // database non ancora aggiornato (manca chosen_id): salva comunque, l'id resta nello stato della strada e nell'analisi congelata
-        if (r.error && /chosen_id/.test(r.error.message)) { const { chosen_id: _x, ...rest } = o as Outcome; r = await sb().from("outcomes").insert(rest).select().single(); }
+        // database non ancora aggiornato: salva comunque la decisione, senza i campi nuovi
+        if (r.error && /chosen_id|pred|act/.test(r.error.message)) {
+          const { chosen_id: _x, pred: _p, act: _a, ...rest } = o as Outcome;
+          r = await sb().from("outcomes").insert(rest).select().single();
+          if (!r.error) setErr("Decisione registrata, ma senza la previsione: esegui supabase/migrate_v2_9.sql in Supabase per attivare il confronto previsto/accaduto.");
+        }
         if (r.error) { setErr(r.error.message); return; }
         setOutcomes((x) => [r.data as Outcome, ...x]);
       }
+    },
+    async saveVault(items) {
+      setVault(items);
+      const r = await sb().from("profiles").update({ vault: items }).eq("id", uid);
+      if (r.error) { setErr(/vault/.test(r.error.message) ? "Per salvare il contesto esegui supabase/migrate_v2_12.sql in Supabase (una volta)." : r.error.message); return false; }
+      return true;
     },
     async deleteOutcome(id) {
       setOutcomes((x) => x.filter((y) => y.id !== id));
@@ -167,9 +185,9 @@ export default function Workspace({ children }: { children: React.ReactNode }) {
       const s = sb();
       for (const t of ["outcomes", "snapshots", "dependencies", "decisions", "ai_usage"]) chk(await s.from(t).delete().eq("user_id", uid));
       chk(await s.from("profiles").delete().eq("id", uid));
-      setDecisions([]); setDeps([]); setSnapshots([]); setOutcomes([]); setProfile(DEF_PROFILE);
+      setDecisions([]); setDeps([]); setSnapshots([]); setOutcomes([]); setProfile(DEF_PROFILE); setVault([]);
     },
-  }), [ready, err, email, profile, decisions, deps, snapshots, outcomes, uid, chk]);
+  }), [ready, err, email, profile, decisions, deps, snapshots, outcomes, vault, uid, chk]);
 
   return <C.Provider value={v}>{children}</C.Provider>;
 }

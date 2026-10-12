@@ -454,3 +454,37 @@ details.deep > summary { cursor: pointer; font-weight: 600; color: var(--navy); 
 .voi { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-top: 4px; font-weight: 400; }
 .waitc { border-left: 5px solid var(--orange); }
 .aisrc { display: block; color: var(--muted); font-size: 12px; margin-top: 6px; }
+details.cons { border-top: 1px solid var(--line); padding-top: 8px; }
+details.cons summary small { font-weight: 400; }
+.hitrow { display: grid; grid-template-columns: 20px 1fr; gap: 8px; align-items: start; font-size: 14px; cursor: pointer; }
+.hitrow input { width: 16px; height: 16px; margin: 2px 0 0; }
+.hitrow + .numin { margin-left: 28px; }
+.pact { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; font-weight: 400; }
+.pmeta { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-top: 6px; font-weight: 400; }
+.pmeta input:not([type=date]) { width: 130px; padding: 4px 8px; font-size: 13px; }
+.pmeta input[type=date] { width: auto; padding: 4px 8px; font-size: 13px; }
+.pmeta select { width: auto; max-width: 260px; padding: 4px 8px; font-size: 13px; }
+.plansteps li.late > b { color: var(--red); }
+.monc { border-left: 5px solid var(--teal); }
+.monc.rivedere { border-left-color: var(--red); }
+.monc h3 .pill { margin-left: 6px; }
+.watch { border-top: 1px solid var(--line); padding-top: 8px; }
+.watch.hit > .row b { color: var(--red); }
+.debt.on { border-left: 5px solid var(--orange); }
+.evin { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 6px; align-items: center; }
+.evin input:not([type=date]) { flex: 1 1 200px; padding: 5px 8px; font-size: 13px; }
+.evin input[type=date] { width: auto; padding: 4px 8px; font-size: 13px; }
+.evin label { display: flex; gap: 4px; align-items: center; }
+.evc.warn { border-left: 5px solid var(--orange); }
+.evt td small { display: inline; }
+.evt tr.bad td:first-child { color: var(--red); font-weight: 600; }
+.ctxi { border-top: 1px solid var(--line); padding-top: 8px; }
+.ctxi.superato, .ctxi.escluso { opacity: .55; }
+.ctxi.superato input[aria-label="Elemento"] { text-decoration: line-through; }
+.ctxi input[aria-label="Elemento"] { padding: 6px 9px; }
+.ctxi select { padding: 6px 8px; font-size: 13px; }
+.btn.ghost.on { background: var(--sky-l); }
+.ctxsteps { margin: 0; padding-left: 1.3em; display: grid; gap: 8px; }
+.ctxsteps li > div { margin-top: 6px; }
+.ctxrev { border-left: 5px solid var(--orange); }
+.cxu { font-size: 14px; }

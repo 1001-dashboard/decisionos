@@ -1,4 +1,5 @@
 "use client";
+import { monitorOf } from "@/lib/monitor";
 import Link from "next/link";
 import { useState } from "react";
 import { Plus, ArrowRight } from "lucide-react";
@@ -33,6 +34,7 @@ export default function Decisioni() {
                 {d.model.options.map((o) => <span key={o.id} className={`pill ${o.id === t?.id ? "teal" : "info"}`}>{o.name} {fmt(a.rows.find((r) => r.id === o.id)?.score ?? 0)}</span>)}
                 {a.tie ? <span className="pill bad">parità</span> : a.fragile.length ? <span className="pill warn">fragile</span> : null}
                 <span className="pill info">importanza {"●".repeat(d.imp)}</span>
+                {(() => { const mo = monitorOf(d); return mo ? <span className={`pill ${mo.state === "rivedere" ? "bad" : "info"}`}>{mo.state === "rivedere" ? "Da rivedere" : `In osservazione${mo.due.length ? ` · ${mo.due.length} da ricontrollare` : ""}`}</span> : null; })()}
               </div>
             </Link>
           );

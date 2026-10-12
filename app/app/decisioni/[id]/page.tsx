@@ -4,7 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Plus, Trash2, Snowflake, CheckCircle2, Bot, Check, AlertCircle, ArrowRight, ArrowLeft,
-  ArrowLeftRight, GitBranch, Sparkles, Calculator, HelpCircle, Hourglass, ListOrdered, Milestone, Lightbulb, StickyNote, Wallet, ChevronDown, TrendingUp, TrendingDown, ShieldAlert, Link2, Scale, Swords, RefreshCw, ThumbsUp, ThumbsDown, X, Brain, FileText,
+  ArrowLeftRight, GitBranch, Sparkles, Calculator, HelpCircle, Hourglass, ListOrdered, Milestone, Lightbulb, StickyNote, Wallet, ChevronDown, TrendingUp, TrendingDown, ShieldAlert, Link2, Scale, Swords, RefreshCw, ThumbsUp, ThumbsDown, X, Brain, FileText, Eye,
 } from "lucide-react";
 import { useWs } from "@/components/Workspace";
 import { ScoreBars } from "@/components/charts";
@@ -13,9 +13,12 @@ import {
   tradeoff, solidity, crossEffects, hashOf, biasChecks, conclusive, infoValue, readiness, focus, stopText, fallbackText, oddScenario, invertedScenario, isStatusQuo, contiDelta, saldo, syncConti, isOut, revOf, closedHash, OPT_ST, type OptState, type Line, riskViews, riskSummary, customRes,
   type Resources, type Rule, type Risk,
   areasOf, phasesOf, snapPhase, PHASE_SETS, PLAN_L, PLAN_D, type Area, type Horizon, type Cond, type Dilemma as DilemmaT, type PlanKind, type Phase,
-  LEVELS, type Crit, type Decision, type Impact, type Model, type Opt, type Rel, untestedText } from "@/lib/engine";
+  LEVELS, type Crit, type Decision, type Impact, type Model, type Opt, type Rel, untestedText, famOf, TIPO_L, evidenceOf } from "@/lib/engine";
 import { CRIT_LIB } from "@/lib/templates";
 import { briefing } from "@/lib/narrative";
+import { execPlan, setStep as setPlanStep, type PlanItem, type Plan } from "@/lib/execution";
+import { monitorOf, watchProposals, watchState, observe } from "@/lib/monitor";
+import { relevantCtx, ctxForAi, critHints, CTX_ONE } from "@/lib/context";
 import { impFor, priGap } from "@/lib/priorities";
 import { ai, compact, mergeStrade, contiFromAi, contiPayload, premessaPayload, type AiStrade, type AiConti, type AiPremessa } from "@/lib/ai";
 
@@ -73,13 +76,14 @@ function PcList({ items, kind, onChange }: { items: string[]; kind: "pro" | "con
 }
 
 /** Strade mancanti: falso dilemma con proposte da aggiungere. */
-function Dilemma({ d, add, drop, close }: { d: DilemmaT; add: (kd: PlanKind, name: string) => void; drop: (kd: PlanKind, name: string, why: string) => void; close: () => void }) {
+function Dilemma({ d, add, drop, close, tipo, setTipo }: { d: DilemmaT; add: (kd: PlanKind, name: string) => void; drop: (kd: PlanKind, name: string, why: string) => void; close: () => void; tipo?: string; setTipo: (t: string) => void }) {
   const [open, setOpen] = useState<PlanKind | null>(null);
   const [why, setWhy] = useState("");
   return (
     <div className="card stack dilemma">
       <h3 style={{ margin: 0 }}><GitBranch size={18} /> Mancano strade</h3>
       <p style={{ margin: 0 }}>{d.msg}</p>
+      {!d.sugg.length && famOf(tipo) === "ignota" && <TipoSel v={tipo} on={setTipo} />}
       <div className="stack" style={{ gap: 8 }}>
         {d.sugg.map((x) => (
           <div key={x.kd} className="sugg stack" style={{ gap: 8 }}>
@@ -100,6 +104,195 @@ function Dilemma({ d, add, drop, close }: { d: DilemmaT; add: (kd: PlanKind, nam
         ))}
       </div>
       <button className="btn ghost sm" style={{ alignSelf: "flex-start" }} onClick={() => confirm("Confermi che non esistono altre strade realisticamente perseguibili? Lo trovi scritto nel report. Se cambi racconto o strade, ti verrà chiesto di confermarlo di nuovo.") && close()}>{d.stale ? "Confermo: non esistono altre strade perseguibili" : "Non esistono altre strade realisticamente perseguibili"}</button>
+    </div>
+  );
+}
+
+/** Tipo di decisione: decide quali strade intermedie hanno senso (pratiche, di valori, di salute). */
+function TipoSel({ v, on }: { v?: string; on: (t: string) => void }) {
+  return (
+    <label className="row" style={{ gap: 8, alignItems: "center" }}><span className="f" style={{ margin: 0 }}>Tipo di decisione</span>
+      <select aria-label="Tipo di decisione" style={{ width: "auto" }} value={v ?? ""} onChange={(e) => on(e.target.value)}>
+        <option value="">Non indicato</option>{Object.entries(TIPO_L).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+      </select></label>
+  );
+}
+
+/** Piano operativo: ogni passo ha chi, entro quando, dopo cosa. Chiudere un passo cambia il modello e la decisione si ricalcola. */
+function PlanCard({ plan, m, setM, setCondSt, setVoi, ready, go, chosen }: {
+  plan: Plan; m: Model; setM: (fn: (m: Model) => void) => void; setCondSt: (oid: string, cid: string, v: Cond["st"]) => void;
+  setVoi: (key: string, pt: { c?: "facile" | "medio" | "difficile"; days?: number | null }) => void; ready: ReturnType<typeof readiness>; go: (i: number) => void; chosen: boolean;
+}) {
+  const [nt, setNt] = useState(""), [nd, setNd] = useState(""), [ed, setEd] = useState<string | null>(null);
+  const today = new Date().toISOString().slice(0, 10);
+  const meta = (key: string, pt: Parameters<typeof setPlanStep>[2]) => setM((mm) => { mm.act = setPlanStep(mm.act, key, pt); });
+  const done = (key: string, fn?: (mm: Model) => void) => setM((mm) => { fn?.(mm); mm.act = setPlanStep(mm.act, key, { done: today }); });
+  const add = (t: string, ph: "prima" | "dopo") => { if (!t.trim()) return; meta(`t_${uid()}`, { t: t.trim(), ph }); };
+  // funzione, non componente: così i campi in cui stai scrivendo non vengono ricreati a ogni ricalcolo
+  const row = (x: PlanItem, list: PlanItem[]) => {
+    const c = ready.open.find((y) => y.key === x.key);
+    const a = x.act;
+    return (
+      <li key={x.key} className={x.late ? "late" : ""}>
+        <b>{x.t}</b>{x.why && <small className="muted" style={{ display: "block" }}>{x.why}</small>}
+        {x.stop && <small className="stop">{x.stop}</small>}
+        <div className="pact">
+          {a.k === "cond" && <span className="seg sm" role="group" aria-label={`Esito: ${x.t}`}>{(["si", "no"] as const).map((v) => <button key={v} onClick={() => done(x.key, (mm) => { const c = mm.options.find((y) => y.id === a.opt)?.cond?.find((z) => z.id === a.cond); if (c) c.st = v; })}>{v === "si" ? "Verificata: sì" : "Risulta no"}</button>)}</span>}
+          {a.k === "dato" && <DatoIn m={m} opt={a.opt} crit={a.crit} ok={(v) => done(x.key, (mm) => { const o = mm.options.find((y) => y.id === a.opt)!; const k = mm.criteria.find((y) => y.id === a.crit)!; if (k.kind === "num") (o.raw ??= {})[a.crit] = v; else o.s[a.crit] = v; (o.m ??= {})[a.crit] = { ...(o.m?.[a.crit] ?? {}), rel: "F", dt: today }; })} />}
+          {a.k === "rischio" && <TextOk ph="Cosa faresti se succede" ok={(t) => done(x.key, (mm) => { const r = mm.options.find((y) => y.id === a.opt)?.risks?.find((z) => z.id === a.risk); if (r) r.x = t; })} />}
+          {a.k === "ver" && <button className="btn sm" onClick={() => done(x.key, (mm) => { const o = mm.options.find((y) => y.id === a.opt)!; o.st = "attiva"; o.stAt = new Date().toISOString(); })}>Verificata: torna attiva</button>}
+          {a.k === "vai" && <button className="btn ghost sm" onClick={() => go(a.step)}>Vai a «{a.label}»</button>}
+          {a.k === "spunta" && <button className="btn sm" onClick={() => meta(x.key, { done: today })}><CheckCircle2 size={14} /> Fatto</button>}
+        </div>
+        {c?.voi && (
+          <div className="voi">
+            <small>Può ribaltare la scelta (forza {c.voi.power}%). Quanto costa saperlo?</small>
+            <span className="seg sm" role="group" aria-label={`Costo per sapere: ${c.how}`}>{(["facile", "medio", "difficile"] as const).map((v) => <button key={v} className={c.voi!.c === v ? "on" : ""} onClick={() => setVoi(c.voi!.key, { c: v })}>{v[0].toUpperCase() + v.slice(1)}</button>)}</span>
+            <span className="row" style={{ gap: 4, alignItems: "center" }}><Num value={c.voi.days ?? null} w={50} suffix="giorni" onChange={(v) => setVoi(c.voi!.key, { days: v == null ? null : Math.abs(v) })} /></span>
+            {c.voi.worth !== "?" && <span className={`pill ${c.voi.worth === "si" ? "ok" : c.voi.worth === "no" ? "bad" : "warn"}`}>{c.voi.late ? "non fai in tempo: decidi senza" : c.voi.worth === "si" ? "vale la pena" : c.voi.worth === "no" ? "non vale la pena" : "forse"}</span>}
+          </div>
+        )}
+        <div className="pmeta">
+          {(x.who || x.due) && <small><b>{[x.who, x.due ? `entro il ${new Date(x.due).toLocaleDateString("it-IT")}` : ""].filter(Boolean).join(" · ")}</b></small>}
+          {x.late && <span className="pill bad">in ritardo</span>}
+          {x.blocked && <small className="muted" title={x.blocked}>aspetta: {x.blocked.length > 70 ? x.blocked.slice(0, 70) + "…" : x.blocked}</small>}
+          <button className="btn ghost sm" aria-expanded={ed === x.key} onClick={() => setEd(ed === x.key ? null : x.key)}>{x.who || x.due || x.dep ? "Modifica" : "Chi e quando"}</button>
+          {!x.auto && <button className="iconbtn" title="Togli il passo" onClick={() => setM((mm) => { if (mm.act) delete mm.act[x.key]; })}><Trash2 size={14} /></button>}
+        </div>
+        {ed === x.key && (
+          <div className="pmeta">
+            <input aria-label="Chi" placeholder="Chi (io)" defaultValue={x.who ?? ""} onBlur={(e) => e.target.value !== (x.who ?? "") && meta(x.key, { who: e.target.value })} />
+            <label className="row" style={{ gap: 4, alignItems: "center" }}><small>entro</small><input aria-label="Entro" type="date" value={x.due ?? ""} onChange={(e) => meta(x.key, { due: e.target.value })} /></label>
+            {list.length > 1 && <select aria-label="Dopo" value={x.dep ?? ""} onChange={(e) => meta(x.key, { dep: e.target.value })}><option value="">non aspetta altri passi</option>{list.filter((y) => y.key !== x.key && y.dep !== x.key).map((y) => <option key={y.key} value={y.key}>dopo: {y.t.slice(0, 50)}</option>)}</select>}
+          </div>
+        )}
+      </li>
+    );
+  };
+  return (
+    <div className="card stack plan">
+      <h3 style={{ margin: 0 }}><ListOrdered size={18} /> Piano operativo{plan.late ? <span className="pill bad">{plan.late} in ritardo</span> : null}</h3>
+      {plan.prima.length > 0 && <>
+        <div className="cgrp">Prima di decidere, in quest&apos;ordine</div>
+        <ol className="plansteps">
+          {plan.prima.map((x) => row(x, plan.prima))}
+          <li><b>Poi torna qui:</b> Decision OS ricalcola con i nuovi dati e ti dice se la decisione è pronta.</li>
+        </ol>
+      </>}
+      <div className="row" style={{ gap: 6 }}>
+        <input aria-label="Nuovo passo prima" placeholder="Aggiungi un passo prima di decidere (es. chiedi il contratto per iscritto)" value={nt} onChange={(e) => setNt(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { add(nt, "prima"); setNt(""); } }} style={{ flex: "1 1 260px" }} />
+        <button className="btn sm" onClick={() => { add(nt, "prima"); setNt(""); }}><Plus size={14} /> Aggiungi</button>
+      </div>
+      {chosen && <>
+        <div className="cgrp">Dopo la scelta: attuazione</div>
+        {plan.dopo.length > 0 && <ol className="plansteps">{plan.dopo.map((x) => row(x, plan.dopo))}</ol>}
+        <div className="row" style={{ gap: 6 }}>
+          <input aria-label="Nuovo passo dopo" placeholder="Cosa va fatto per mettere in pratica la scelta (es. firma, preavviso, trasloco)" value={nd} onChange={(e) => setNd(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { add(nd, "dopo"); setNd(""); } }} style={{ flex: "1 1 260px" }} />
+          <button className="btn sm" onClick={() => { add(nd, "dopo"); setNd(""); }}><Plus size={14} /> Aggiungi</button>
+        </div>
+      </>}
+      {plan.fatti.length > 0 && (
+        <details><summary>Fatti ({plan.fatti.length})</summary>
+          <ul className="clean">{plan.fatti.map((x) => <li key={x.key}><CheckCircle2 size={13} /> {x.t} <small className="muted">· {new Date(x.done!).toLocaleDateString("it-IT")}{x.who ? ` · ${x.who}` : ""}</small>
+            {!x.auto && <button className="btn ghost sm" onClick={() => meta(x.key, { done: "" })}>Riapri</button>}</li>)}</ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
+/** Valore verificato per un dato che può ribaltare la scelta: lo inserisci e diventa «verificato». */
+function DatoIn({ m, opt, crit, ok }: { m: Model; opt: string; crit: string; ok: (v: number) => void }) {
+  const k = m.criteria.find((y) => y.id === crit);
+  const o = m.options.find((y) => y.id === opt);
+  const [v, setV] = useState<number | null>(k?.kind === "num" ? o?.raw?.[crit] ?? null : o?.s?.[crit] ?? null);
+  if (!k || !o) return null;
+  return (
+    <span className="row" style={{ gap: 6, alignItems: "center" }}>
+      {k.kind === "num" ? <Num value={v} w={90} suffix={k.unit || undefined} onChange={setV} />
+        : k.kind === "g" ? <select aria-label={`Valore verificato di ${k.name}`} style={{ width: "auto" }} value={v ?? ""} onChange={(e) => setV(e.target.value === "" ? null : +e.target.value)}><option value="">—</option>{LEVELS.map((l, i) => <option key={l} value={i * 25}>{l}</option>)}</select>
+        : <Num value={v} w={70} suffix="/100" onChange={setV} />}
+      <button className="btn sm" disabled={v == null} onClick={() => v != null && ok(v)}>Dato verificato</button>
+    </span>
+  );
+}
+
+function TextOk({ ph, ok }: { ph: string; ok: (t: string) => void }) {
+  const [t, setT] = useState("");
+  return (
+    <span className="row" style={{ gap: 6, flex: "1 1 260px" }}>
+      <input aria-label={ph} placeholder={ph} value={t} onChange={(e) => setT(e.target.value)} style={{ flex: "1 1 200px" }} />
+      <button className="btn sm" disabled={!t.trim()} onClick={() => ok(t.trim())}>Salva</button>
+    </span>
+  );
+}
+
+/** Monitoraggio: dopo la scelta, le condizioni che la tengono in piedi. Se una scatta, la decisione va riaperta. */
+function MonitorCard({ d, setM, reopen, base, rules }: { d: Decision; setM: (fn: (m: Model) => void) => void; reopen: (why: string) => void; base: Resources; rules: Rule[] }) {
+  const m = d.model;
+  const chosen = m.options.find((o) => o.st === "scelta");
+  const mo = monitorOf(d);
+  const [nt, setNt] = useState(""), [nop, setNop] = useState<"" | "<" | ">">(""), [nv, setNv] = useState<number | null>(null);
+  const [vals, setVals] = useState<Record<string, number | null>>({});
+  const fmtD = (x: string) => new Date(x).toLocaleDateString("it-IT");
+  const ob = (id: string, o: { v?: number; ok?: boolean }) => setM((mm) => { observe(mm, id, o); });
+  const add = () => {
+    if (!nt.trim()) return;
+    setM((mm) => { (mm.watch ??= []).push({ id: uid(), t: nt.trim(), src: "user", every: 30, from: new Date().toISOString().slice(0, 10), ...(nop && nv != null ? { k: "num", metric: nt.trim(), op: nop, v: nv } : { k: "libero" }) }); });
+    setNt(""); setNop(""); setNv(null);
+  };
+  return (
+    <div className={`card stack monc ${mo?.state ?? ""}`}>
+      <h3 style={{ margin: 0 }}><Eye size={18} /> Questa scelta regge finché…{mo && <span className={`pill ${mo.state === "rivedere" ? "bad" : "info"}`}>{mo.state === "rivedere" ? "Da rivedere" : "In osservazione"}</span>}</h3>
+      {mo?.hits.length ? (
+        <div className="note bad">
+          <b>Condizione di revisione raggiunta.</b> Il presupposto con cui avevi preso questa decisione non è più vero: {mo.hits.map((w) => `«${w.t}»`).join("; ")}.
+          <div style={{ marginTop: 8 }}><button className="btn sm pri" onClick={() => reopen(mo.hits.map((w) => w.t).join("; "))}>Riapri la decisione</button></div>
+        </div>
+      ) : null}
+      {!m.watch?.length && (
+        <div className="stack" style={{ gap: 6 }}>
+          <small>Non hai ancora detto quando questa scelta andrebbe rivista. Decision OS può proportelo dalle soglie in cui {chosen ? `«${chosen.name}»` : "la strada scelta"} smette di essere la migliore, dalle condizioni verificate e dai rischi.</small>
+          {chosen && <button className="btn sm" style={{ alignSelf: "flex-start" }} onClick={() => setM((mm) => { mm.watch = watchProposals({ ...d, model: mm }, chosen.id, base, rules); })}>Proponi le condizioni di revisione</button>}
+        </div>
+      )}
+      {(m.watch ?? []).map((w) => {
+        const s = watchState(w);
+        return (
+          <div key={w.id} className={`watch ${s.hit ? "hit" : s.due ? "due" : ""}`}>
+            <div className="row between" style={{ flexWrap: "nowrap", gap: 8 }}>
+              <span style={{ minWidth: 0 }}><b>{w.t}</b><br /><small className="muted">
+                {s.last ? `ultimo controllo ${fmtD(s.last.at)}${s.last.v != null ? `: ${fmt(s.last.v)}${w.unit ? " " + w.unit : ""}` : s.last.ok != null ? (w.k === "rischio" ? (s.last.ok ? ": è successo" : ": non è successo") : s.last.ok ? ": ancora vero" : ": non più vero") : ""}` : "mai controllata"}
+                {!s.hit && ` · prossimo controllo ${fmtD(s.next)}`}</small></span>
+              <span className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+                {s.hit ? <span className="pill bad">scattata</span> : s.due ? <span className="pill warn">da ricontrollare</span> : s.last ? <span className="pill ok">regge</span> : <span className="pill info">da controllare</span>}
+                <button className="iconbtn" title="Togli" onClick={() => setM((mm) => { mm.watch = (mm.watch ?? []).filter((x) => x.id !== w.id); })}><Trash2 size={14} /></button>
+              </span>
+            </div>
+            <div className="pact">
+              {w.k === "num" ? <>
+                <Num value={vals[w.id] ?? null} w={90} suffix={w.unit || undefined} placeholder="oggi" onChange={(v) => setVals((x) => ({ ...x, [w.id]: v }))} />
+                <button className="btn sm" disabled={vals[w.id] == null} onClick={() => { ob(w.id, { v: vals[w.id]! }); setVals((x) => ({ ...x, [w.id]: null })); }}>Registra il valore di oggi</button>
+              </> : w.k === "rischio" ? <>
+                <button className="btn sm" onClick={() => ob(w.id, { ok: false })}>Non è successo</button>
+                <button className="btn sm" onClick={() => ob(w.id, { ok: true })}>È successo</button>
+              </> : <>
+                <button className="btn sm" onClick={() => ob(w.id, { ok: true })}>Ancora vero</button>
+                <button className="btn sm" onClick={() => ob(w.id, { ok: false })}>Non più vero</button>
+              </>}
+              <select aria-label="Ogni quanto ricontrollare" style={{ width: "auto", padding: "4px 8px", fontSize: 13 }} value={w.every ?? 30} onChange={(e) => setM((mm) => { const x = mm.watch!.find((y) => y.id === w.id)!; x.every = +e.target.value; })}>
+                {[7, 14, 30, 60, 90].map((n) => <option key={n} value={n}>ogni {n} giorni</option>)}
+              </select>
+            </div>
+          </div>
+        );
+      })}
+      <div className="row" style={{ gap: 6, alignItems: "center" }}>
+        <input aria-label="Nuova condizione di revisione" placeholder="Aggiungi: es. vendite dopo 90 giorni, affitto del locale" value={nt} onChange={(e) => setNt(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} style={{ flex: "1 1 240px" }} />
+        <select aria-label="Soglia" style={{ width: "auto" }} value={nop} onChange={(e) => setNop(e.target.value as "" | "<" | ">")}><option value="">deve restare vero</option><option value="<">rivedi se scende sotto</option><option value=">">rivedi se sale sopra</option></select>
+        {nop && <Num value={nv} w={90} onChange={setNv} />}
+        <button className="btn sm" onClick={add}><Plus size={14} /> Aggiungi</button>
+      </div>
     </div>
   );
 }
@@ -336,7 +529,22 @@ export default function DecisionPage() {
     timer.current = setTimeout(async () => { pending.current = null; await ws.saveDecision(next); setSaved(true); }, 600);
   }
   const setM = (fn: (m: Model) => void) => { const mm = structuredClone(d.model); fn(mm); upd({ ...d, model: mm }); };
+  /** riapre una decisione presa: la scelta torna una strada attiva, il motivo resta nella storia della decisione */
+  const reopen = (why: string) => {
+    const now = new Date().toISOString();
+    const mm = structuredClone(d.model);
+    mm.options.forEach((o) => { if (o.st === "scelta") { o.st = "attiva"; o.stAt = now; } });
+    (mm.reopened ??= []).push({ at: now.slice(0, 10), why });
+    upd({ ...d, status: "aperta", model: mm });
+  };
   const opt = (mm: Model, oid: string) => mm.options.find((o) => o.id === oid)!;
+  /** fonte, data, documento e validità di un dato: campi vuoti tolti */
+  const setMeta = (oid: string, cid: string, pt: Partial<NonNullable<Opt["m"]>[string]>) => setM((mm) => {
+    const x = opt(mm, oid); x.m ??= {};
+    const n = { ...x.m[cid], ...pt } as Record<string, unknown>;
+    for (const k of Object.keys(n)) if (n[k] === "" || n[k] == null) delete n[k];
+    x.m[cid] = n;
+  });
   const crit = (mm: Model, cid: string) => mm.criteria.find((c) => c.id === cid)!;
 
   /* importanza: alla prima modifica converte i pesi vecchi in importanza 1-5 */
@@ -402,7 +610,12 @@ export default function DecisionPage() {
   const cross = cOpt ? crossEffects(cOpt, d, others, ws.deps, R, ws.profile.rules, ws.profile.horizon) : [];
   const gaps = m.criteria.map((c) => ({ c, g: priGap(c.name, c.imp, ws.profile.priorities) })).filter((x) => x.g);
   const ctxStr = ws.profile.ai_share.contesto ? Object.entries(ws.profile.context).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("; ") : undefined;
-  const aiPayload = compact(d, res, { eco: ws.profile.ai_share.economia, ctx: ctxStr, res: R });
+  // contesto personale pertinente: solo confermato, mai privato verso l'AI, escludibile per decisione
+  const cxRel = relevantCtx(ws.vault, d, 15, m.cxOff ?? []);
+  const cxAll = relevantCtx(ws.vault, d, 15);
+  const cx = (eco0: boolean) => ctxForAi(cxRel, eco0);
+  const hints = critHints(cxRel, m.criteria);
+  const aiPayload = compact(d, res, { eco: ws.profile.ai_share.economia, ctx: ctxStr, res: R, cx: cx(ws.profile.ai_share.economia) });
   const aiHash = hashOf(aiPayload);
   const contro = m.ai?.contro;
   async function runContro() {
@@ -426,6 +639,8 @@ export default function DecisionPage() {
   });
   const addArea = () => { const a = newArea.trim().toLowerCase(); if (!a) return; setM((mm) => { const cur = areasOf(mm); if (!cur.includes(a)) mm.areas = [...cur, a].slice(0, 10); }); setNewArea(""); };
   const conds = ready.open.filter((c) => c.grp === "cond"), chiar = ready.open.filter((c) => c.grp === "chiarire");
+  const plan = execPlan(d, ready);
+  const ev = evidenceOf(d, res);
   const rsum = riskSummary(d, R, ws.profile.rules).filter((x) => !isOut(m.options.find((o) => o.id === x.id)!));
   const briefOrder = m.options.filter((o) => !isOut(o)).map((o) => {
     const row = res.rows.find((x) => x.id === o.id);
@@ -471,7 +686,7 @@ export default function DecisionPage() {
       const before = d!.model;
       const xc = await ai<AiConti>("conti", contiPayload(d!, eco));
       let model = contiFromAi(before, xc).model;
-      const xs = await ai<AiStrade>("strade", compact({ ...d!, model }, undefined, { eco, ctx: ctxStr }));
+      const xs = await ai<AiStrade>("strade", compact({ ...d!, model }, undefined, { eco, ctx: ctxStr, cx: cx(eco) }));
       model = mergeStrade(model, xs).model;
       const cnt = (mm: Model) => ({ v: [...(mm.oggi ?? []), ...mm.options.flatMap((o) => o.conti ?? [])].filter((l) => l.v != null).length,
         c: mm.options.reduce((a, o) => a + (o.cond?.length ?? 0), 0), r: mm.options.reduce((a, o) => a + (o.risks?.length ?? 0), 0), t: mm.options.reduce((a, o) => a + (o.tl?.length ?? 0), 0) });
@@ -481,6 +696,7 @@ export default function DecisionPage() {
       setAdattaMsg(`Adattata: ${a.v - b.v} importi, ${a.c - b.c} condizioni, ${a.r - b.r} rischi, ${a.t - b.t} conseguenze in più. Controlla le voci marcate AI.`);
     } catch (e) { setAiErr((e as Error).message); } finally { setAiBusy(false); }
   }
+  const setTipo = (t: string) => setM((mm) => { if (t) mm.tipo = t; else delete mm.tipo; });
   const closePaths = () => setM((mm) => { mm.closed = { at: new Date().toISOString(), hash: closedHash({ ...d!, model: mm }) }; });
   function dropPlan(kd: PlanKind, name: string, why: string) {
     setM((mm) => { mm.options.push({ id: uid(), name, kd, s: {}, st: "np", stAt: new Date().toISOString(), ...(why.trim() ? { stWhy: why.trim() } : {}) }); });
@@ -493,7 +709,7 @@ export default function DecisionPage() {
   async function runStrade() {
     setAiBusy(true); setAiErr("");
     try {
-      const x = await ai<AiStrade>("strade", compact(d!, undefined, { eco: ws.profile.ai_share.economia, ctx: ctxStr }));
+      const x = await ai<AiStrade>("strade", compact(d!, undefined, { eco: ws.profile.ai_share.economia, ctx: ctxStr, cx: cx(ws.profile.ai_share.economia) }));
       const { model, added } = mergeStrade(m, x);
       model.ai = { ...model.ai, strade: { at: new Date().toISOString(), h: hashOf({ t: d!.descr, o: model.options.map((o) => o.name) }), ...(typeof x.x === "string" && x.x ? { x: x.x } : {}) } };
       upd({ ...d!, model });
@@ -537,6 +753,7 @@ export default function DecisionPage() {
           <div className="row" style={{ gap: 8, marginTop: 4 }}>
             <span className={`pill ${saved ? "ok" : "info"}`}>{saved ? "Salvato" : "Salvataggio…"}</span>
             {d.due && <span className="pill info">entro {new Date(d.due).toLocaleDateString("it-IT")}</span>}
+            {(() => { const mo = monitorOf(d); return mo ? <span className={`pill ${mo.state === "rivedere" ? "bad" : "info"}`}>{mo.state === "rivedere" ? "Da rivedere" : "In osservazione"}</span> : null; })()}
             <button className="btn ghost sm" onClick={() => setMore(!more)}>Dettagli <ChevronDown size={14} /></button>
           </div>
         </div>
@@ -550,8 +767,19 @@ export default function DecisionPage() {
       {more && (
         <div className="card grid g3" style={{ marginBottom: 14 }}>
           <div><label className="f">Stato</label><select value={d.status} onChange={(e) => upd({ ...d, status: e.target.value as Decision["status"] })}><option value="aperta">Aperta</option><option value="presa">Presa</option><option value="archiviata">Archiviata</option></select></div>
-          <div><label className="f">Da decidere entro</label><input type="date" value={d.due ?? ""} onChange={(e) => upd({ ...d, due: e.target.value || null })} /></div>
+          <div><label className="f">Da decidere entro</label><input type="date" value={d.due ?? ""} onChange={(e) => { const nd = e.target.value || null; upd({ ...d, due: nd, model: d.due && nd && nd > d.due ? { ...d.model, rinvii: (d.model.rinvii ?? 0) + 1 } : d.model }); }} />{(m.rinvii ?? 0) > 0 && <small className="muted">spostata in avanti {m.rinvii} {m.rinvii === 1 ? "volta" : "volte"}</small>}</div>
+          <div><label className="f">Tipo di decisione</label><select aria-label="Tipo nei dettagli" value={m.tipo ?? ""} onChange={(e) => setTipo(e.target.value)}><option value="">Non indicato</option>{Object.entries(TIPO_L).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
           <div><label className="f">Peso rispetto alle altre decisioni</label><select value={d.imp} onChange={(e) => upd({ ...d, imp: +e.target.value })}><option value={1}>Normale</option><option value={2}>Alta</option><option value={3}>Molto alta</option></select></div>
+          <div style={{ gridColumn: "1/-1" }} className="cxu">
+            <label className="f">Contesto usato</label>
+            {!cxAll.length ? <small className="muted">Nessun elemento del tuo contesto riguarda questa decisione. <Link href="/app/contesto">Contesto</Link></small> : <>
+              <small>{cxRel.length} {cxRel.length === 1 ? "elemento" : "elementi"} dal tuo profilo · {cxRel.filter((x) => !x.priv && !x.sens).length} inviati all&apos;Analista (gli altri sono privati) · togli la spunta per non usarne uno qui.</small>
+              <ul className="clean">{cxAll.map((x) => (
+                <li key={x.id}><label className="row" style={{ gap: 6, alignItems: "flex-start", flexWrap: "nowrap" }}>
+                  <input type="checkbox" style={{ width: "auto", marginTop: 3 }} checked={!(m.cxOff ?? []).includes(x.id)} onChange={(e) => setM((mm) => { const o = new Set(mm.cxOff ?? []); if (e.target.checked) o.delete(x.id); else o.add(x.id); mm.cxOff = [...o]; })} />
+                  <span>{x.t} <small className="muted">· {CTX_ONE[x.k]}{x.priv || x.sens ? " · privato" : ""}</small></span></label></li>))}</ul>
+            </>}
+          </div>
           <div style={{ gridColumn: "1/-1" }}><label className="f">La situazione in breve (premessa)</label><textarea style={{ minHeight: 90 }} value={d.descr ?? ""} onChange={(e) => upd({ ...d, descr: e.target.value })} />
             <div className="row" style={{ gap: 8, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
               <button className="btn sm" disabled={aiBusy} onClick={() => runPremessa(false)}><Sparkles size={14} /> {aiBusy ? "L'Analista sta leggendo…" : "Riscrivi con i dati emersi"}</button>
@@ -610,7 +838,7 @@ export default function DecisionPage() {
             </div>
           )}
           {(() => { const ns = act.map((o) => o.name.trim().toLowerCase()).filter(Boolean); const dup = ns.filter((n, i) => ns.indexOf(n) !== i); return dup.length ? <div className="note warn" style={{ fontSize: 14 }}>Due strade hanno lo stesso nome ({[...new Set(dup)].join(", ")}): rinominale, altrimenti nel report e nel Registro non le distingui.</div> : null; })()}
-          {dilemma && <Dilemma d={dilemma} add={addPlan} drop={dropPlan} close={closePaths} />}
+          {dilemma && <Dilemma d={dilemma} add={addPlan} drop={dropPlan} close={closePaths} tipo={m.tipo} setTipo={setTipo} />}
           {m.closed && !dilemma?.stale && <div className="note row between" style={{ fontSize: 14 }}><span>Hai dichiarato il {new Date(m.closed.at).toLocaleDateString("it-IT")} che non esistono altre strade realisticamente perseguibili.</span><button className="btn ghost sm" onClick={() => setM((mm) => { delete mm.closed; })}>Riapri</button></div>}
           {((m.scartate ?? []).length > 0 || m.options.some(isOut)) && (
             <div className="note" style={{ fontSize: 14 }}>
@@ -746,6 +974,13 @@ export default function DecisionPage() {
                         </div>
                       ) : null;
                     })()}
+                    {hints.filter((h) => h.crit === c.id).map((h) => (
+                      <div key={h.item.id} className="prigap">
+                        {h.text}
+                        {h.imp ? <button className="btn ghost sm" onClick={() => setImp(c.id, h.imp!)}>Parti da {h.imp}/5</button>
+                          : !k ? <button className="btn ghost sm" onClick={() => setCons(c.id, isNum ? (lessBetter ? { max: c.worst } : { min: c.worst }) : { min: 50 })}>Mettilo come requisito</button> : null}
+                      </div>
+                    ))}
                   </div>
                   <div>
                     <label className="f">Requisito minimo (non negoziabile)</label>
@@ -822,10 +1057,18 @@ export default function DecisionPage() {
                             <select className="srcsel" value={meta.rel && meta.rel !== "?" ? meta.rel : ""} onChange={(e) => setM((mm) => { const x = opt(mm, o.id); x.m ??= {}; x.m[c.id] = { ...x.m[c.id], rel: (e.target.value || undefined) as Rel }; })}>
                               <option value="">Fonte?</option>{SRC.map((s) => <option key={s.k} value={s.k}>{s.l}</option>)}
                             </select>
-                            <button className={`iconbtn ${meta.why ? "has" : ""}`} title="Nota" onClick={() => setNotes({ ...notes, [nk]: !notes[nk] })}><StickyNote size={15} /></button>
+                            <button className={`iconbtn ${meta.why || meta.src || meta.doc || meta.until ? "has" : ""}`} title="Fonte e prove" aria-label="Fonte e prove" onClick={() => setNotes({ ...notes, [nk]: !notes[nk] })}><StickyNote size={15} /></button>
                           </span>
                         </div>
                         {(notes[nk] || meta.why) && <input className="note-in" placeholder="Perché? Da dove viene questo dato?" value={meta.why ?? ""} onChange={(e) => setM((mm) => { const x = opt(mm, o.id); x.m ??= {}; x.m[c.id] = { ...x.m[c.id], why: e.target.value }; })} />}
+                        {notes[nk] && (
+                          <div className="evin">
+                            <input aria-label="Fonte del dato" placeholder="Fonte: chi o cosa (es. proprietario, CRM, contratto)" value={meta.src ?? ""} onChange={(e) => setMeta(o.id, c.id, { src: e.target.value })} />
+                            <label><small>rilevato il</small><input aria-label="Data del dato" type="date" value={meta.dt ?? ""} onChange={(e) => setMeta(o.id, c.id, { dt: e.target.value })} /></label>
+                            <label><small>vale fino al</small><input aria-label="Validità del dato" type="date" value={meta.until ?? ""} onChange={(e) => setMeta(o.id, c.id, { until: e.target.value })} /></label>
+                            <input aria-label="Documento" placeholder="Documento o link (es. contratto.pdf)" value={meta.doc ?? ""} onChange={(e) => setMeta(o.id, c.id, { doc: e.target.value })} />
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -991,7 +1234,7 @@ export default function DecisionPage() {
       {/* ---------- 5. RISULTATO ---------- */}
       {S === 5 && (
         <section className="stack">
-          {dilemma && <Dilemma d={dilemma} add={(kd, n) => { addPlan(kd, n); setStep(1); window.scrollTo({ top: 0 }); }} drop={dropPlan} close={closePaths} />}
+          {dilemma && <Dilemma d={dilemma} add={(kd, n) => { addPlan(kd, n); setStep(1); window.scrollTo({ top: 0 }); }} drop={dropPlan} close={closePaths} tipo={m.tipo} setTipo={setTipo} />}
           <div className={`card stack ready ${ready.state}`}>
             <div className="rk">Decisione</div>
             {ready.chosen && <div className="note ok" style={{ fontSize: 14 }}>Hai scelto <b>{ready.chosen.name}</b> e l&apos;hai registrata nel Registro.{!ready.chosen.wasLead ? " Non è la strada in testa nell'analisi: annota nel Registro perché, ti servirà per la retrospettiva." : ready.chosen.open > 0 ? ` Restavano ${ready.chosen.open} verifiche aperte: tienile d'occhio.` : ""}</div>}
@@ -1032,35 +1275,37 @@ export default function DecisionPage() {
             {ready.failed.length > 0 && <div className="note bad">Non soddisfatte: {ready.failed.map((c) => c.t).join("; ")}.</div>}
             <small>Decision OS non sceglie al posto tuo: ti dice a quali condizioni una strada regge e cosa verificare prima.</small>
           </div>
+          {(d.status === "presa" || ready.chosen) && <MonitorCard d={d} setM={setM} reopen={reopen} base={ws.profile.resources} rules={ws.profile.rules} />}
           <div className="card stack waitc">
             <h3 style={{ margin: 0 }}><Hourglass size={18} /> Il costo del non decidere</h3>
-            {ready.wait?.left != null && <p style={{ margin: 0 }}>Hai <b>{ready.wait.left}</b> {ready.wait.left === 1 ? "giorno" : "giorni"}{ready.wait.exp[0] && ready.wait.exp[0].days === ready.wait.left ? <>: «{ready.wait.exp[0].name}» scade</> : d.due ? <> fino alla data che ti sei dato</> : null}.</p>}
+            {ready.wait?.over != null && <p style={{ margin: 0, color: "var(--red)" }}>La data che ti eri dato è passata da <b>{ready.wait.over}</b> {ready.wait.over === 1 ? "giorno" : "giorni"}: decidi adesso o fissane una nuova, motivando il rinvio.</p>}
+            {ready.wait?.left != null && (ready.wait.left === 0
+              ? <p style={{ margin: 0 }}><b>Scade oggi</b>{ready.wait.exp[0] && ready.wait.exp[0].days === 0 ? <>: «{ready.wait.exp[0].name}»</> : d.due ? <>: è la data che ti sei dato</> : null}.</p>
+              : <p style={{ margin: 0 }}>Hai <b>{ready.wait.left}</b> {ready.wait.left === 1 ? "giorno" : "giorni"}{ready.wait.exp[0] && ready.wait.exp[0].days === ready.wait.left ? <>: «{ready.wait.exp[0].name}» scade</> : d.due ? <> fino alla data che ti sei dato</> : null}.</p>)}
             <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               <small>Aspettando perdi circa</small><Num value={m.wait?.m ?? null} w={86} suffix="€" onChange={(v) => setM((mm) => { mm.wait = { ...mm.wait, m: v == null ? null : Math.abs(v) }; })} /><small>al mese</small>
-              <input aria-label="Cosa succede se aspetti" style={{ flex: "1 1 260px" }} placeholder="Cosa succede se aspetti? (es. la NASpI si consuma, l'offerta può saltare)" value={m.wait?.t ?? ""} onChange={(e) => setM((mm) => { mm.wait = { ...mm.wait, t: e.target.value }; })} />
+              <input aria-label="Cosa succede se aspetti" style={{ flex: "1 1 260px" }} placeholder={({ valori: "Cosa succede se aspetti? (es. il problema si ripete, la fiducia si consuma)", salute: "Cosa succede se aspetti? (es. i sintomi peggiorano, la lista d'attesa si allunga)", pratica: "Cosa succede se aspetti? (es. la NASpI si consuma, l'offerta può saltare)", ignota: "Cosa succede se aspetti?" } as const)[famOf(m.tipo)]} value={m.wait?.t ?? ""} onChange={(e) => setM((mm) => { mm.wait = { ...mm.wait, t: e.target.value }; })} />
             </div>
             {ready.wait && ready.wait.m > 0 && <small>Aspettare 7 giorni ≈ <b>{eur(ready.wait.c7)}</b> · 30 giorni ≈ <b>{eur(ready.wait.c30)}</b> · 90 giorni ≈ <b>{eur(ready.wait.c90)}</b>.</small>}
             {ready.wait?.exp.map((x) => <small key={x.id} className="err">«{x.name}» scade tra {x.days} {x.days === 1 ? "giorno" : "giorni"}: dopo esce dalle strade possibili.</small>)}
             {ready.state === "non_pronta" && ready.wait && (ready.wait.m > 0 || ready.wait.exp.length > 0) && <div className="note warn" style={{ fontSize: 14 }}>Non sei ancora pronto, ma aspettare ha un costo: fai prima le verifiche che valgono la pena e che fai in tempo, poi decidi anche senza le altre.</div>}
           </div>
-          {ready.open.length > 0 && (
-            <div className="card stack plan">
-              <h3 style={{ margin: 0 }}><ListOrdered size={18} /> Prima di rispondere, in quest&apos;ordine</h3>
-              <ol className="plansteps">
-                {ready.open.map((c) => <li key={c.key}><b>{c.how}</b>{c.gate && <small className="stop">{stopText(ready)}</small>}
-                  {c.voi && (
-                    <div className="voi">
-                      <small>Può ribaltare la scelta (forza {c.voi.power}%). Quanto costa saperlo?</small>
-                      <span className="seg sm" role="group" aria-label={`Costo per sapere: ${c.how}`}>{(["facile", "medio", "difficile"] as const).map((v) => <button key={v} className={c.voi!.c === v ? "on" : ""} onClick={() => setVoi(c.voi!.key, { c: v })}>{v[0].toUpperCase() + v.slice(1)}</button>)}</span>
-                      <span className="row" style={{ gap: 4, alignItems: "center" }}><Num value={c.voi.days ?? null} w={50} suffix="giorni" onChange={(v) => setVoi(c.voi!.key, { days: v == null ? null : Math.abs(v) })} /></span>
-                      {c.voi.worth !== "?" && <span className={`pill ${c.voi.worth === "si" ? "ok" : c.voi.worth === "no" ? "bad" : "warn"}`}>{c.voi.late ? "non fai in tempo: decidi senza" : c.voi.worth === "si" ? "vale la pena" : c.voi.worth === "no" ? "non vale la pena" : "forse"}</span>}
-                    </div>
-                  )}
-                </li>)}
-                <li><b>Poi torna qui:</b> Decision OS ricalcola con i nuovi dati e ti dice se la decisione è pronta.</li>
-              </ol>
+          {ev && (
+            <div className={`card stack evc ${ev.old || ev.expired ? "warn" : ""}`}>
+              <h3 style={{ margin: 0 }}><FileText size={18} /> Su cosa poggia</h3>
+              <p style={{ margin: 0 }}>{ev.text}</p>
+              <table className="t evt"><thead><tr><th>Dato</th><th>Valore</th><th>Peso</th><th>Prova</th></tr></thead>
+                <tbody>{ev.items.map((x) => (
+                  <tr key={x.crit} className={x.expired || x.old ? "bad" : ""}>
+                    <td>{x.name}</td><td>{x.val}</td><td>{x.share}%</td>
+                    <td><span className={`pill ${x.rel === "F" ? "ok" : x.rel === "S" ? "warn" : x.rel === "D" ? "info" : "bad"}`}>{x.rel === "F" ? "verificato" : x.rel === "D" ? "dichiarato" : x.rel === "S" ? (x.ai ? "stima AI" : "stima") : "senza fonte"}</span>
+                      <small className="muted">{[x.src, x.dt ? `del ${new Date(x.dt).toLocaleDateString("it-IT")}` : "", x.doc, x.until ? `${x.expired ? "scaduto" : "valido"} fino al ${new Date(x.until).toLocaleDateString("it-IT")}` : ""].filter(Boolean).map((t) => " · " + t).join("")}</small>
+                      {x.old && <small className="err"> · rilevato {x.age} giorni fa</small>}</td>
+                  </tr>))}</tbody></table>
+              {(ev.noSrc > 0 || ev.est > 0 || ev.old > 0 || ev.expired > 0) && <button className="btn ghost sm" style={{ alignSelf: "flex-start" }} onClick={() => { setStep(3); window.scrollTo({ top: 0 }); }}>Aggiungi fonti e date al passo «Valuta»</button>}
             </div>
           )}
+          <PlanCard plan={plan} m={m} setM={setM} setCondSt={setCondSt} setVoi={setVoi} ready={ready} go={(i) => { setStep(i); window.scrollTo({ top: 0 }); }} chosen={!!ready.chosen || d.status === "presa"} />
           {foc && (
             <div className="card stack">
               <h3 style={{ margin: 0 }}><Scale size={18} /> La scelta vera</h3>

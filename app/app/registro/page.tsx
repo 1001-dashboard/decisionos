@@ -1,11 +1,12 @@
 "use client";
 import { Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Snowflake, CheckCircle2, Trash2, GitCompare, Bot } from "lucide-react";
+import { Snowflake, CheckCircle2, Trash2, GitCompare, Bot, GraduationCap } from "lucide-react";
 import { useWs, type Snapshot, type Outcome } from "@/components/Workspace";
 import { Top } from "@/components/Shell";
 import { ai } from "@/lib/ai";
-import { analyzeDecision, fmt, isOut, type DecResult } from "@/lib/engine";
+import { watchProposals } from "@/lib/monitor";
+import { analyzeDecision, fmt, eur, isOut, predOf, lessons, LEARN_MIN, type DecResult, type Act } from "@/lib/engine";
 
 const CAUSE: Record<string, string> = { ragionamento: "Errore di ragionamento", dato: "Dato sbagliato", imprevisto: "Evento imprevedibile", nessuno: "Previsione corretta" };
 
@@ -38,6 +39,57 @@ function Compare({ s }: { s: Snapshot }) {
   );
 }
 
+/** Numero in euro salvato quando esci dal campo. «1.500» e «1500» valgono uguale. */
+function Eur({ v, on, ph }: { v: number | null | undefined; on: (x: number | null) => void; ph?: string }) {
+  return <span className="numin" style={{ width: 150 }}><input inputMode="decimal" defaultValue={v == null ? "" : String(v)} placeholder={ph ?? "—"}
+    onBlur={(e) => { const t = e.target.value.trim().replace(/\./g, "").replace(",", "."); const x = t === "" ? null : +t; if (x === null || !isNaN(x)) { if (x !== (v ?? null)) on(x); } }} /><em>€</em></span>;
+}
+
+/** Consuntivo con gli stessi campi della previsione: è ciò che permette di misurare i tuoi errori di stima. */
+function Consuntivo({ o }: { o: Outcome }) {
+  const { saveOutcome } = useWs();
+  const p = o.pred!; const a: Act = o.act ?? {};
+  const set = (x: Partial<Act>) => saveOutcome({ id: o.id, act: { ...a, ...x } });
+  const filled = a.ok != null || a.c0 != null || a.m != null || Object.keys(a.hit ?? {}).length > 0;
+  return (
+    <details className="cons" open={!!o.observed && !filled}>
+      <summary>Consuntivo{filled ? " · compilato" : ""} <small className="muted">— stessi campi della previsione, servono a misurare i tuoi errori di stima</small></summary>
+      <div className="stack" style={{ marginTop: 8 }}>
+        {p.c0 != null && <div><label className="f">{p.c0 < 0 ? "Spesa iniziale" : "Entrata iniziale"}: prevista {eur(Math.abs(p.c0))}</label><Eur v={a.c0 == null ? null : Math.abs(a.c0)} ph="reale" on={(x) => set({ c0: x == null ? null : p.c0! < 0 ? -Math.abs(x) : Math.abs(x) })} /></div>}
+        {p.m && <div><label className="f">Differenza mensile: prevista {eur(p.m[1])} (se va male {eur(p.m[0])})</label><Eur v={a.m} ph="reale, es. -300" on={(x) => set({ m: x })} /></div>}
+        {p.rs.length > 0 && <div><label className="f">Rischi che avevi previsto: quali sono successi?</label>
+          {p.rs.map((r) => { const h = a.hit?.[r.id]; return (
+            <div key={r.id} className="stack" style={{ gap: 4, marginTop: 6 }}>
+              <label className="hitrow"><input type="checkbox" checked={h != null} onChange={(e) => { const hit = { ...(a.hit ?? {}) }; if (e.target.checked) hit[r.id] = 0; else delete hit[r.id]; set({ hit }); }} />
+                <span>{r.t} <small className="muted">(probabilità {r.p}{r.tot ? `, previsti ${eur(Math.abs(r.tot))}` : ""})</small></span></label>
+              {h != null && <Eur v={h ? Math.abs(h) : null} ph="costo reale" on={(x) => set({ hit: { ...(a.hit ?? {}), [r.id]: x == null ? 0 : -Math.abs(x) } })} />}
+            </div>); })}
+        </div>}
+        <div><label className="f">Com&apos;è andata, nel complesso?</label>
+          <select style={{ width: "auto", display: "block" }} value={a.ok ?? ""} onChange={(e) => set({ ok: e.target.value ? +e.target.value : null })}>
+            <option value="">—</option>{["Molto peggio del previsto", "Peggio", "Come previsto", "Meglio", "Molto meglio"].map((l, i) => <option key={i} value={i + 1}>{i + 1} · {l}</option>)}
+          </select></div>
+      </div>
+    </details>
+  );
+}
+
+/** Cosa insegnano le decisioni passate: solo sopra una soglia minima di casi, sempre con il numero di casi. */
+function Lessons() {
+  const { outcomes } = useWs();
+  const withPred = outcomes.filter((o) => o.pred);
+  if (!withPred.length) return null;
+  const done = withPred.filter((o) => o.act && Object.keys(o.act).length).length;
+  const ls = lessons(outcomes);
+  return (
+    <div className="card stack">
+      <h3><GraduationCap size={18} /> Cosa stai imparando</h3>
+      {ls.length ? ls.map((l) => <div key={l.k} className="note">{l.t} <small className="muted">· su {l.n} {l.k.startsWith("r_") ? "rischi" : "casi"}</small></div>)
+        : <small>Servono almeno {LEARN_MIN} decisioni con il consuntivo compilato per dire qualcosa di affidabile sui tuoi errori di stima: ne hai {done}. Sotto questa soglia ogni percentuale sarebbe rumore.</small>}
+    </div>
+  );
+}
+
 function OutcomeCard({ o }: { o: Outcome }) {
   const { saveOutcome, deleteOutcome } = useWs();
   const [busy, setBusy] = useState(false);
@@ -61,6 +113,7 @@ function OutcomeCard({ o }: { o: Outcome }) {
         <input type="date" style={{ width: "auto" }} value={o.review_at ?? ""} onChange={(e) => saveOutcome({ id: o.id, review_at: e.target.value || null })} title="Data revisione" />
         <button className="btn sm" disabled={busy || !o.observed} onClick={retro}><Bot size={14} /> {busy ? "…" : "Retrospettiva AI"}</button>
       </div>
+      {o.pred && <Consuntivo o={o} />}
       {ai_ && <div className="note"><ul style={{ margin: 0, paddingLeft: 18 }}>{(ai_.p ?? []).map((p, i) => <li key={i}>{p}</li>)}</ul>{ai_.c && <p style={{ margin: "6px 0 0" }}><strong>{ai_.c}</strong></p>}</div>}
     </div>
   );
@@ -81,11 +134,14 @@ function Inner() {
     await ws.createSnapshot(`${dec.name} · decisione presa`, { decisions: [dec], deps: ws.deps, resources: ws.profile.resources, rules: ws.profile.rules, horizon: ws.profile.horizon }, { res: [r] });
     const ch = dec.model.options.find((o) => o.id === f.chosen && !isOut(o));
     if (!ch) return;
-    await ws.saveOutcome({ decision_id: dec.id, decision_name: dec.name, chosen: ch.name, chosen_id: ch.id, expected: f.expected || null, review_at: f.review_at || null });
+    await ws.saveOutcome({ decision_id: dec.id, decision_name: dec.name, chosen: ch.name, chosen_id: ch.id, pred: predOf(dec, r, ch.id, ws.profile.resources), expected: f.expected || null, review_at: f.review_at || null });
     // la strada scelta diventa uno stato vero della decisione (le altre tornano attive se erano «scelta»)
     const now = new Date().toISOString();
     const options = dec.model.options.map((o) => (o.id === ch.id ? { ...o, st: "scelta" as const, stAt: now } : o.st === "scelta" ? { ...o, st: "attiva" as const, stAt: now } : o));
-    await ws.saveDecision({ ...dec, status: "presa", model: { ...dec.model, options } });
+    // la scelta entra «in osservazione»: condizioni di revisione proposte dal motore (le puoi togliere o aggiungerne nella decisione)
+    const mm = { ...dec.model, options };
+    const watch = dec.model.watch?.length ? dec.model.watch : watchProposals({ ...dec, model: mm }, ch.id, ws.profile.resources, ws.profile.rules);
+    await ws.saveDecision({ ...dec, status: "presa", model: { ...mm, watch } });
     setF({ decision_id: "", chosen: "", expected: "", review_at: "" });
   }
 
@@ -114,6 +170,7 @@ function Inner() {
               </>
             )}
           </div>
+          <Lessons />
           {ws.outcomes.map((o) => <OutcomeCard key={o.id} o={o} />)}
         </div>
 

@@ -1,5 +1,5 @@
 import { BP } from "./bp.ts";
-import { uid, LEVELS, levelOf, isMoneyCrit, redactMoney, normalize, type Decision, type DecResult, type Model, type Rel, type Resources, type Opt, type PlanKind, type Risk, type Horizon, type Line, PHASE_SETS, snapPhase, phasesOf, areasOf, syncConti } from "./engine.ts";
+import { uid, LEVELS, levelOf, isMoneyCrit, redactMoney, normalize, type Decision, type DecResult, type Model, type Rel, type Resources, type Opt, type PlanKind, type Risk, type Horizon, type Line, PHASE_SETS, snapPhase, phasesOf, areasOf, syncConti, TIPO_L } from "./engine.ts";
 
 export async function ai<T = unknown>(mode: string, payload: unknown): Promise<T> {
   const r = await fetch(`${BP}/api/ai`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode, payload }) });
@@ -11,7 +11,7 @@ export async function ai<T = unknown>(mode: string, payload: unknown): Promise<T
 /** Payload minimo per l'AI: chiavi brevi, solo ciò che serve.
  *  Con eco=false nessun importo in € esce: i valori dei criteri economici diventano una posizione sulla scala
  *  (es. "buono"), le soglie in € spariscono, i testi liberi vengono ripuliti. Il server applica comunque una seconda pulizia. */
-export function compact(d: Decision, r: DecResult | undefined, opts: { eco: boolean; ctx?: string; res?: Resources }) {
+export function compact(d: Decision, r: DecResult | undefined, opts: { eco: boolean; ctx?: string; res?: Resources; cx?: string[] }) {
   const m = d.model;
   const nm = normalize(m);
   const tx = (t?: string) => (t == null ? undefined : opts.eco ? t : redactMoney(t));
@@ -56,6 +56,7 @@ export function compact(d: Decision, r: DecResult | undefined, opts: { eco: bool
     } : {}),
     ...(opts.eco && opts.res ? { base: opts.res } : {}),
     ...(opts.ctx ? { ctx: tx(opts.ctx) } : {}),
+    ...(opts.cx?.length ? { cx: opts.cx } : {}),
   };
 }
 
@@ -65,7 +66,7 @@ export type AiPlan = {
   tl?: { h?: number; a?: string; t?: string }[]; nx?: string[]; cd?: { t?: string; h?: string; g?: boolean }[];
   rk?: { t?: string; p?: string; c?: number; m?: number; d?: number; x?: string }[];
 };
-export type AiStrade = { x?: string; a?: AiPlan[] };
+export type AiStrade = { x?: string; a?: AiPlan[]; k?: string };
 /** Orizzonti e aree proposti dall'AI, ripuliti: 3-5 orizzonti ordinati, max 8 aree. */
 export function hzFromAi(ph: unknown, ar: unknown): { phases?: Horizon[]; areas?: string[] } {
   const phases = arr<{ h?: unknown; l?: unknown }>(ph).filter((x) => x && Number.isFinite(Number(x.h)) && typeof x.l === "string" && x.l.trim())
@@ -100,6 +101,8 @@ export function mergeStrade(m: Model, x: AiStrade & { ph?: unknown; ar?: unknown
   const hz = hzFromAi(x.ph, x.ar);
   if (!mm.phases?.length && hz.phases && !mm.options.some((o) => o.tl?.length)) mm.phases = hz.phases;
   if (!mm.areas?.length && hz.areas) mm.areas = hz.areas;
+  // il tipo lo classifica l'Analista solo se manca: quello scelto da te non si tocca
+  if (!mm.tipo && typeof x.k === "string" && TIPO_L[x.k]) mm.tipo = x.k;
   const added: string[] = [];
   for (const a of arr<AiPlan>(x.a).filter((a) => a && typeof a.n === "string" && a.n.trim()).slice(0, 6)) {
     const pl = planFromAi(a, phasesOf(mm), areasOf(mm));

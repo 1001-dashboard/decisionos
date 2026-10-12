@@ -3,16 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 export const maxDuration = 30;
 import { sbServer } from "@/lib/supabase/server";
-import { redactMoney } from "@/lib/engine";
-
-/** Seconda barriera: se l'utente non ha abilitato le cifre economiche, nessun importo in € esce verso l'AI,
- *  qualunque cosa abbia inviato la pagina. */
-function scrub(x: unknown): unknown {
-  if (typeof x === "string") return redactMoney(x);
-  if (Array.isArray(x)) return x.map(scrub);
-  if (x && typeof x === "object") return Object.fromEntries(Object.entries(x).filter(([k]) => !["im", "mi", "base"].includes(k)).map(([k, v]) => [k, scrub(v)]));
-  return x;
-}
+import { cleanPayload } from "@/lib/privacy";
 
 // Analista AI. Il modello interpreta e critica; i numeri li calcola il motore lato client.
 // Prompt compatti, chiavi JSON brevi, max_tokens bassi: costi contenuti.
@@ -21,7 +12,7 @@ const MODEL = process.env.ANTHROPIC_MODEL || "claude-haiku-5-5";
 const GEMINI = process.env.GEMINI_MODEL || "gemini-flash-latest";
 const CAP = Number(process.env.AI_DAILY_CALLS || 60);
 
-const BASE = "Sei l'analista critico di Decision OS. Italiano, conciso, concreto. Mai confermare per compiacere. Non inventare fatti né costi che l'utente non ha detto (es. un affitto se la casa è di proprietà, una seconda casa se la famiglia resta dov'è): se un dato manca, dillo o chiedilo. Rispondi SOLO con JSON valido, nessun testo fuori.";
+const BASE = "Sei l'analista critico di Decision OS. Italiano, conciso, concreto. Mai confermare per compiacere. Non inventare fatti né costi che l'utente non ha detto (es. un affitto se la casa è di proprietà, una seconda casa se la famiglia resta dov'è): se un dato manca, dillo o chiedilo. Se c'è cx è il contesto personale confermato dall'utente (vincoli, risorse, priorità, progetti): tienine conto, non contraddirlo e non aggiungere altro. Rispondi SOLO con JSON valido, nessun testo fuori.";
 
 const P: Record<string, { s: string; max: number }> = {
   struttura: {
@@ -43,7 +34,7 @@ Regole: le alternative sono PIANI, non sì/no. Strategie kd: base diretta, cond 
   },
   strade: {
     max: 2600,
-    s: `Strade e conseguenze di una decisione esistente. Le scelte reali raramente sono sì/no: cerca le strade mancanti con le strategie pertinenti (kd: cond condizionata, prova sperimentale/pilota, temp temporanea, rinvio rinviata, cerca alternativa, sq status quo) e completa quelle esistenti. Se la decisione non ha orizzonti (hz assente) proponi "ph" e "ar" come per una decisione nuova; altrimenti usa quelli forniti. Non dire cosa scegliere. JSON:
+    s: `Strade e conseguenze di una decisione esistente. Le scelte reali raramente sono sì/no: cerca le strade mancanti con le strategie pertinenti (kd: cond condizionata, prova sperimentale/pilota, temp temporanea, rinvio rinviata, cerca alternativa, sq status quo) e completa quelle esistenti. Se la decisione non ha orizzonti (hz assente) proponi "ph" e "ar" come per una decisione nuova; altrimenti usa quelli forniti. Se il tipo k è assente, aggiungi "k":"lavoro|casa|acquisto|fornitore|persona|auto|soldi|progetto|relazioni|famiglia|salute|studio|morale|altro" e scegli strategie adatte a quel tipo (in scelte morali o di salute niente prove o pilota). Non dire cosa scegliere. JSON:
 {"x":"se le strade attuali sono un falso dilemma, perché in 1 frase, altrimenti vuoto",
 "a":[{"n":"strada","kd":"base|cond|prova|temp|rinvio|cerca|sq","p":["pro concreti, max 3, brevi"],"m":["contro concreti, max 3, brevi"],"tl":[{"h":uno degli orizzonti ph,"a":"una delle aree ar","t":"cosa succede concretamente"}],"nx":["decisione che questa strada costringe a prendere dopo"],"cd":[{"t":"condizione verificabile perché la strada abbia senso, con soglia se il racconto la dà","h":"azione concreta per verificarla","g":true se senza di essa la strada non ha senso}],"rk":[{"t":"rischio concreto","p":"bassa|media|alta","c":perdita una tantum €,"m":perdita €/mese,"d":mesi,"x":"come ridurlo"}]}]}
 Regole: per completare una strada esistente metti in n il suo codice k (A, B…), non il nome; completane tl, nx, cd; aggiungi max 3 strade nuove, mai quelle in no (scartate dall'utente, con il motivo) né loro varianti. Negoziare non è una strada: va nelle azioni h. tl sulla vita reale, non solo soldi. rk: 1-3 rischi reali per strada con come ridurli. Non inventare cifre: soglie e importi solo se presenti nei dati.`,
@@ -67,6 +58,7 @@ Regole: in l solo ciò che cambia rispetto a oggi; il resto resta uguale e non v
   contro: { max: 900, s: `Contraddittorio. Dai il miglior argomento CONTRO l'alternativa in testa, verifica alternative ignorate, metti alla prova ipotesi e pesi. JSON {"p":["obiezione"],"c":"conclusione 1-2 frasi"}` },
   svolta: { max: 900, s: `Punto di svolta. Indica soglie concrete (cifre, condizioni contrattuali, date) che ribaltano la scelta, usando sensibilità e impatti forniti. JSON {"p":["se X scende sotto Y allora ..."],"c":"verifica prioritaria"}` },
   retro: { max: 900, s: `Valutazione retrospettiva. Confronta previsto e accaduto; distingui errore di ragionamento, dato sbagliato, evento imprevedibile. Non giudicare dalla sola fortuna dell'esito. JSON {"p":["punto"],"c":"lezione","k":"ragionamento|dato|imprevisto|nessuno"}` },
+  contesto: { max: 2400, s: `Estrai dal testo dell'utente gli elementi del suo contesto personale, SOLO quelli scritti, senza dedurre né completare. Ogni elemento è breve (max 20 parole). Tipi k: fatto, risorsa, vincolo, obiettivo, valore, progetto, impegno, preferenza, incertezza, persona, regola, decisione. Deduzioni o cose dubbie: tipo incertezza. JSON {"e":[{"k":"tipo","t":"testo","l":"stabile|fase","n":numero solo se scritto,"u":"unità","imp":1-5 solo se l'importanza è detta,"s":true se salute, orientamento, religione, politica o dati sensibili,"r":"liquidita|mensile|ore se è quella risorsa"}]} max 80 elementi.` },
   link: { max: 700, s: `Proponi collegamenti tra opzioni di decisioni diverse (risorse condivise: soldi, tempo, residenza). Solo collegamenti reali. JSON {"d":[{"if":"idOpzione","excl":"idOpzione incompatibile"|null,"req":"idOpzione richiesta"|null,"why":"motivo"}]}` },
 };
 
@@ -81,9 +73,7 @@ export async function POST(req: NextRequest) {
   const p = P[mode as string];
   if (!p || !payload) return NextResponse.json({ e: "Richiesta non valida" }, { status: 400 });
   // vale solo il consenso della richiesta corrente: la preferenza del profilo decide solo lo stato iniziale del toggle
-  const eco = payload?.eco === true;
-  const clean = eco ? payload : scrub(payload);
-  if (clean && typeof clean === "object") delete (clean as Record<string, unknown>).eco;
+  const clean = cleanPayload(mode, payload);
   const body = JSON.stringify(clean);
   if (body.length > 24000) return NextResponse.json({ e: "Contenuto troppo lungo" }, { status: 413 });
 

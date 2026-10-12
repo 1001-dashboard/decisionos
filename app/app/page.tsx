@@ -1,14 +1,15 @@
 "use client";
 import Link from "next/link";
-import { Plus, Wallet, Clock, AlertTriangle, CalendarClock, GitFork, ArrowRight, ShieldCheck } from "lucide-react";
+import { Plus, Wallet, Clock, AlertTriangle, CalendarClock, GitFork, ArrowRight, ShieldCheck, Landmark } from "lucide-react";
 import { useWs } from "@/components/Workspace";
 import { useAnalysis } from "@/components/useAnalysis";
 import { Top } from "@/components/Shell";
 import { eur, fmt, readiness, resLabel, RES_LABEL } from "@/lib/engine";
 import ReportView from "@/components/ReportView";
+import { decisionDebt } from "@/lib/monitor";
 
 export default function Dashboard() {
-  const { profile, outcomes, decisions } = useWs();
+  const { profile, outcomes, decisions, vault } = useWs();
   const { open, all, cmb, rep } = useAnalysis();
   const R = profile.resources;
   const verify = open.reduce((a, d) => a + (d.model.assumptions ?? []).filter((x) => x.rel === "?" || x.aff === "bassa").length
@@ -21,6 +22,7 @@ export default function Dashboard() {
   const auton = (R.cash_m ?? 0) >= 0 ? "∞" : fmt((R.cash0 ?? 0) / -(R.cash_m ?? 1));
   const best = cmb.find((c) => !c.excluded.length);
   const noBase = !(R.cash0 || R.cash_m || R.hours_w);
+  const debt = decisionDebt(decisions, outcomes, R, profile.rules);
 
   return (
     <>
@@ -45,6 +47,25 @@ export default function Dashboard() {
         <div className="card kpi"><div className="row between"><span className="l">Tempo libero</span><span className="iconwrap" style={{ width: 32, height: 32 }}><Clock size={16} /></span></div><div className="v num">{fmt(R.hours_w ?? 0)} h</div><small>a settimana, prima delle scelte</small></div>
         <div className="card kpi"><div className="row between"><span className="l">Dati da verificare</span><span className="iconwrap o" style={{ width: 32, height: 32 }}><AlertTriangle size={16} /></span></div><div className="v">{verify}</div><small>ipotesi deboli o valori mancanti</small></div>
       </div>
+
+      {!vault.some((x) => x.st === "confermato") && (
+        <Link href="/app/contesto" className="card row between ctxcta" style={{ marginTop: 16, textDecoration: "none", color: "inherit" }}>
+          <span><b>Fai conoscere a Decision OS la tua situazione</b><br /><small className="muted">Importa il tuo contesto (da ChatGPT, Claude o Gemini): vincoli, risorse, obiettivi e progetti entrano in ogni decisione, dopo che li confermi.</small></span>
+          <ArrowRight size={18} />
+        </Link>
+      )}
+      {decisions.length > 0 && (
+        <div className={`card stack debt ${debt.n ? "on" : ""}`} style={{ marginTop: 16 }}>
+          <h3 style={{ margin: 0 }}><Landmark size={18} /> Debito decisionale {debt.n ? <span className="pill warn">{debt.n}</span> : <span className="pill ok">nessuno</span>}</h3>
+          {!debt.n && <small>Nessuna decisione scaduta, ferma o da rivedere, nessun controllo arretrato.</small>}
+          {debt.groups.map((g) => (
+            <div key={g.k}>
+              <div className="cgrp">{g.t} · {g.items.length}</div>
+              <ul className="clean">{g.items.map((x) => <li key={g.k + x.id}><Link href={x.h}><b>{x.name}</b></Link> <small className="muted">— {x.why}</small></li>)}</ul>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="grid g2" style={{ marginTop: 16, alignItems: "start" }}>
         <div className="card stack">

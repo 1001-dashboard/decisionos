@@ -293,6 +293,10 @@ console.log("engine: 10/10 ok");
   // 26. falso dilemma: sì contro restare fermo
   const fd: Decision = { id: "f", name: "f", status: "aperta", imp: 1, model: { criteria: [{ id: "p", name: "P", w: 0, imp: 3, kind: "g" }], constraints: [],
     options: [{ id: "a", name: "Accetto Ibiza", s: { p: 75 } }, { id: "b", name: "Rifiuto e resto fermo", s: { p: 50 } }] } };
+  // senza tipo il motore non inventa strade: lo dice e blocca comunque «Pronta»
+  const dl0 = E.falseDilemma(fd)!;
+  assert.ok(dl0 && dl0.sugg.length === 0 && /che tipo di decisione/.test(dl0.msg), JSON.stringify(dl0));
+  fd.model.tipo = "lavoro";
   const dl = E.falseDilemma(fd)!;
   assert.ok(dl && dl.sugg.some((x) => x.kd === "prova") && dl.sugg.some((x) => x.kd === "cerca") && dl.sugg.some((x) => x.kd === "cond"), JSON.stringify(dl));
   // 27. decisione condizionata sull'esempio: non pronta, con condizione vincolante e alternativa di riserva
@@ -439,7 +443,7 @@ console.log("engine: 10/10 ok");
   console.log("engine: dominio come input (5 decisioni diverse, risorse tue, strategie) ok");
   // 42. strada proposta scartata come non perseguibile: conta come considerata
   const sc: Decision = { id: "s", name: "s", status: "aperta", imp: 1, model: { criteria: [{ id: "p", name: "P", w: 0, imp: 3, kind: "g" }], constraints: [],
-    options: [{ id: "a", name: "Accettare proposta Ibiza", s: { p: 75 }, m: { p: { rel: "F" } } }, { id: "b", name: "Resto dove sono", s: { p: 25 }, m: { p: { rel: "F" } } }] } };
+    options: [{ id: "a", name: "Accettare proposta Ibiza", s: { p: 75 }, m: { p: { rel: "F" } } }, { id: "b", name: "Resto dove sono", s: { p: 25 }, m: { p: { rel: "F" } } }], tipo: "lavoro" } };
   assert.equal(E.falseDilemma(sc)!.sugg.length, 3);
   sc.model.scartate = [{ kd: "cond", name: "Accettare proposta Ibiza, solo a condizioni", why: "già so che l'azienda non offre alloggio", at: "2026-10-11" }];
   assert.ok(E.falseDilemma(sc)!.sugg.every((x) => x.kd !== "cond"));
@@ -508,7 +512,7 @@ console.log("engine: 10/10 ok");
   // 49. stato delle strade: «non perseguibile» resta visibile, esce dai calcoli; lo scarto vale per la strada concreta, non per il tipo
   const st: Decision = { id: "st", name: "st", status: "aperta", imp: 1, model: { criteria: [{ id: "p", name: "P", w: 0, imp: 3, kind: "g" }], constraints: [],
     options: [{ id: "a", name: "Accetto", s: { p: 100 }, m: { p: { rel: "F" } } }, { id: "b", name: "Resto fermo", kd: "sq", s: { p: 25 }, m: { p: { rel: "F" } } },
-      { id: "c", name: "Accetto, solo a condizioni", kd: "cond", s: { p: 90 }, m: { p: { rel: "F" } }, st: "np", stWhy: "nessun alloggio" }] } };
+      { id: "c", name: "Accetto, solo a condizioni", kd: "cond", s: { p: 90 }, m: { p: { rel: "F" } }, st: "np", stWhy: "nessun alloggio" }], tipo: "lavoro" } };
   const sr = E.analyzeDecision(st);
   assert.ok(sr.rows.find((x) => x.id === "c")!.excluded[0] === "non perseguibile: nessun alloggio" && sr.rows[0].id === "a");
   const sd = E.falseDilemma(st)!;
@@ -591,4 +595,163 @@ console.log("engine: 10/10 ok");
   (odd.impacts![0] as { okSf?: boolean }).okSf = true;
   assert.equal(E.oddScenario(odd), null);   // confermato: è la stessa strada andata peggio
   console.log("engine: correzioni dal test sui 10 casi ok");
+}
+{
+  // 59. previsione salvata alla scelta e lezioni dai consuntivi (solo sopra la soglia, sempre con il numero di casi)
+  const E = await import("../lib/engine.ts");
+  const d: Decision = { id: "p", name: "p", status: "aperta", imp: 1, model: { criteria: [{ id: "q", name: "Q", w: 0, imp: 3, kind: "g" }], constraints: [],
+    options: [{ id: "a", name: "Apro", s: { q: 75 }, m: { q: { rel: "S" } }, impacts: [{ r: "cash0", v: -10000 }, { r: "cash_m", v: [-200, 300, 600] }], risks: [{ id: "r1", t: "Ritardo", p: "media", c: -2000 }], rev: { in: 10000, lock: "alto" } },
+      { id: "b", name: "Resto", kd: "sq", s: { q: 50 }, m: { q: { rel: "F" } } }] } };
+  const r = E.analyzeDecision(d);
+  const pa = E.predOf(d, r, "a")!, pb = E.predOf(d, r, "b")!;
+  assert.ok(pa.top && pa.pos === 1 && pa.c0 === -10000 && pa.m![1] === 300 && pa.cert === 0 && pa.irr === true && pa.cap === 10000 && pa.rs[0].tot === -2000, JSON.stringify(pa));
+  assert.ok(!pb.top && pb.pos === 2 && pb.gap > 0 && pb.cert === 100);
+  const mk = (c0: number, m: number, hit: boolean, ok: number, top = true) => ({ pred: { ...pa, top }, act: { c0, m, ok, hit: (hit ? { r1: -3000 } : {}) as Record<string, number> } });
+  assert.deepEqual(E.lessons([mk(-12000, 100, true, 2), mk(-11000, 0, true, 2)]), []);   // 2 casi: nessuna lezione
+  const six = [mk(-12000, -300, true, 2), mk(-11800, 0, true, 3), mk(-12500, 200, true, 2, false), mk(-11500, 300, false, 4, false), mk(-12200, -400, true, 3, false), mk(-10000, 300, false, 4)];
+  const ls = E.lessons(six);
+  const by = (k: string) => ls.find((l) => l.k === k)!;
+  assert.ok(by("c0").t.startsWith("Sottostimi le spese iniziali: in genere costano il 19%") && by("c0").n === 6, by("c0").t);
+  assert.ok(/ti restano 200.€ al mese in meno.*Nel 33% dei casi è andata peggio anche del tuo «se va male»/.test(by("m").t), by("m").t);
+  assert.ok(/probabilità media si sono verificati nel 67%.*Li sottovaluti.*costano più/.test(by("r_media").t), by("r_media").t);
+  assert.ok(by("top").n === 6 && !ls.some((l) => l.k === "cert"));   // tutte con dati poco verificati: nessun confronto
+  console.log("engine: previsione e lezioni dai consuntivi ok");
+}
+{
+  // 60. piano operativo: le verifiche diventano passi con chi/entro/dopo; chiuderli cambia il modello
+  const E = await import("../lib/engine.ts");
+  const X = await import("../lib/execution.ts");
+  const d: Decision = { id: "x", name: "Ibiza", status: "aperta", imp: 1, model: { tipo: "lavoro", criteria: [{ id: "q", name: "Qualità", w: 0, imp: 3, kind: "g" }], constraints: [],
+    options: [{ id: "a", name: "Accetto", s: { q: 100 }, m: { q: { rel: "F" } }, cond: [{ id: "h", t: "Alloggio confermato per iscritto", gate: true, st: "?" }] },
+      { id: "b", name: "Resto", kd: "sq", s: { q: 25 }, m: { q: { rel: "F" } } }] } };
+  d.model.closed = { at: "2026-10-12", hash: E.closedHash(d) };
+  const rd = () => E.readiness(d, E.analyzeDecision(d));
+  let p = X.execPlan(d, rd(), "2026-10-12");
+  const h = p.prima.find((x) => x.key === "uh")!;
+  assert.ok(h && h.act.k === "cond" && h.gate && /esce|Resto/.test(h.stop ?? ""), JSON.stringify(p.prima));
+  // chi, entro, dopo: un mio passo che deve venire prima dell'alloggio
+  d.model.act = X.setStep(d.model.act, "t_1", { t: "Chiedi la RAL definitiva", ph: "prima", who: "Danilo", due: "2026-10-10" });
+  d.model.act = X.setStep(d.model.act, "uh", { who: "Danilo", due: "2026-10-14", dep: "t_1" });
+  p = X.execPlan(d, rd(), "2026-10-12");
+  assert.deepEqual(p.prima.map((x) => x.key), ["t_1", "uh"]);   // chi aspetta viene dopo
+  assert.ok(p.prima[0].late && p.late === 1 && p.prima[1].blocked === "Chiedi la RAL definitiva" && !p.prima[1].late);
+  // la checklist cambia la decisione: alloggio «no» → la strada esce, il passo finisce tra i fatti
+  d.model.options[0].cond![0].st = "no"; d.model.act = X.setStep(d.model.act, "uh", { done: "2026-10-12" });
+  const r2 = rd();
+  assert.equal(r2.lead?.id, "b");
+  p = X.execPlan(d, r2, "2026-10-12");
+  assert.ok(p.fatti.some((x) => x.key === "uh" && /non soddisfatta/.test(x.t)) && !p.prima.some((x) => x.key === "uh"), JSON.stringify(p.fatti));
+  // dopo la scelta: passi di attuazione separati
+  d.model.act = X.setStep(d.model.act, "t_2", { t: "Comunica il rifiuto", ph: "dopo" });
+  assert.deepEqual(X.execPlan(d, r2).dopo.map((x) => x.t), ["Comunica il rifiuto"]);
+  // valori vuoti tolti, nessun ciclo infinito su dipendenze reciproche
+  d.model.act = X.setStep(d.model.act, "t_2", { who: "" });
+  assert.ok(!("who" in d.model.act.t_2));
+  d.model.act = X.setStep(X.setStep(d.model.act, "t_1", { dep: "t_3" }), "t_3", { t: "Altro", ph: "prima", dep: "t_1" });
+  assert.equal(X.execPlan(d, r2).prima.length, 2);
+  console.log("execution: piano operativo che cambia la decisione ok");
+}
+{
+  // 61. monitoraggio: «questa scelta regge finché…», soglie dal motore, osservazioni, debito decisionale
+  const M = await import("../lib/monitor.ts");
+  const d: Decision = { id: "s", name: "Nuova sede", status: "presa", imp: 1, model: { tipo: "progetto",
+    criteria: [{ id: "mg", name: "Margine mensile", w: 0, imp: 4, kind: "num", unit: "€/mese", worst: 2000, best: 6000 }, { id: "q", name: "Qualità della vita", w: 0, imp: 3, kind: "g" }], constraints: [],
+    options: [{ id: "a", name: "Apro in centro", st: "scelta", raw: { mg: 5200 }, s: { q: 50 }, cond: [{ id: "k", t: "Personale disponibile almeno 4", st: "si", gate: true }],
+      risks: [{ id: "r", t: "Clientela più lenta", p: "media", c: -12000 }, { id: "r2", t: "Muffa", p: "bassa" }], impacts: [{ r: "cash_m", v: [-500, 900, 1500] }, { r: "cash0", v: -40000 }] },
+      { id: "b", name: "Resto", kd: "sq", raw: { mg: 3500 }, s: { q: 75 } }] } };
+  const th = M.thresholdOf(d, "a", "mg")!;
+  assert.ok(th && th.op === "<" && th.v > 3500 && th.v < 5200, JSON.stringify(th));
+  const ws = M.watchProposals(d, "a", { cash0: 60000 }, [{ id: "x", name: "Riserva", r: "cash_end", min: 30000 }], "2026-10-01");
+  assert.ok(ws.some((w) => w.k === "num" && w.crit === "mg") && ws.some((w) => w.k === "cond") && ws.some((w) => w.k === "rischio" && w.risk === "r") && !ws.some((w) => w.risk === "r2"), JSON.stringify(ws.map((w) => w.t)));
+  const liq = ws.find((w) => w.metric === "cash_m");
+  assert.ok(liq && liq.op === "<", JSON.stringify(ws.map((w) => w.t)));   // 60.000 − 40.000 = 20.000: per restare sopra 30.000 a 24 mesi servono ≥ +420/mese
+  d.model.watch = ws;
+  let mo = M.monitorOf(d, "2026-10-12")!;
+  assert.ok(mo.state === "osservazione" && mo.due.length === 0);
+  mo = M.monitorOf(d, "2026-11-05")!;   // passati 30 giorni: tutti da ricontrollare
+  assert.equal(mo.due.length, ws.length);
+  const wm = ws.find((w) => w.crit === "mg")!;
+  M.observe(d.model, wm.id, { v: th.v + 300 }, "2026-11-05");
+  assert.equal(M.monitorOf(d, "2026-11-05")!.state, "osservazione");
+  M.observe(d.model, wm.id, { v: th.v - 300 }, "2026-12-05");
+  mo = M.monitorOf(d, "2026-12-05")!;
+  assert.ok(mo.state === "rivedere" && mo.hits[0].id === wm.id);
+  const wr = ws.find((w) => w.risk === "r")!;
+  assert.ok(!M.watchState(wr, "2026-10-02").hit);
+  M.observe(d.model, wr.id, { ok: true }, "2026-10-02");
+  assert.ok(M.watchState(wr, "2026-10-02").hit);   // il rischio è successo
+  // debito decisionale
+  const open: Decision & { updated_at?: string } = { id: "o", name: "Cambio auto", status: "aperta", imp: 1, due: "2026-09-01", updated_at: "2026-08-01T10:00:00Z",
+    model: { tipo: "auto", rinvii: 3, criteria: [{ id: "q", name: "Q", w: 0, imp: 3, kind: "g" }], constraints: [],
+      options: [{ id: "x", name: "Usato", s: { q: 50 }, m: { q: { rel: "S" } } }, { id: "y", name: "Nuova", s: { q: 75 }, m: { q: { rel: "S" } } }],
+      act: { t_1: { t: "Preventivo", ph: "prima", due: "2026-09-10" } } } };
+  const nomon: Decision = { ...d, id: "n", name: "Senza revisione", model: { ...d.model, watch: [] } };
+  const db = M.decisionDebt([d, open, nomon], [{ id: "oc", decision_id: "s", decision_name: "Nuova sede", review_at: "2026-10-01", observed: null, act: null }], {}, [], "2026-12-05");
+  const ks = db.groups.map((x) => x.k);
+  for (const k of ["rivedere", "scadute", "ritardo", "ferme", "rinviate", "esiti", "senza"]) assert.ok(ks.includes(k), k + " " + JSON.stringify(ks));
+  assert.equal(db.n, db.groups.reduce((a, x) => a + x.items.length, 0));
+  console.log("monitor: regge finché, osservazioni, debito decisionale ok");
+}
+{
+  // 62. evidenze: su quali dati poggia la decisione, freschezza, scadenza; entrano in readiness, piano e debito
+  const E = await import("../lib/engine.ts");
+  const M = await import("../lib/monitor.ts");
+  const d: Decision = { id: "e", name: "Affitto", status: "aperta", imp: 1, model: { tipo: "casa",
+    criteria: [{ id: "c", name: "Canone", w: 0, imp: 5, kind: "num", unit: "€/mese", worst: 2000, best: 800 }, { id: "z", name: "Zona", w: 0, imp: 3, kind: "g" }, { id: "l", name: "Luce", w: 0, imp: 1, kind: "g" }],
+    constraints: [], closed: undefined,
+    options: [{ id: "a", name: "Via Roma", raw: { c: 1000 }, s: { z: 75, l: 50 }, m: { c: { rel: "D", src: "proprietario", dt: "2026-05-01", doc: "annuncio.pdf" }, z: { rel: "F" }, l: { rel: "S" } } },
+      { id: "b", name: "Via Po", raw: { c: 1400 }, s: { z: 50, l: 75 }, m: { c: { rel: "F" }, z: { rel: "F" }, l: { rel: "F" } } }] } };
+  const r = E.analyzeDecision(d);
+  const ev = E.evidenceOf(d, r, "2026-10-12")!;
+  assert.ok(ev.opt === "a" && ev.items[0].crit === "c" && ev.items[0].old && ev.items[0].age === 164 && ev.items[0].src === "proprietario", JSON.stringify(ev));
+  assert.ok(/più di 90 giorni/.test(ev.text) && ev.items.length >= 2, ev.text);
+  d.model.closed = { at: "2026-10-12", hash: E.closedHash(d) };
+  const rd = E.readiness(d, r);
+  assert.ok(rd.open.some((c) => c.key === "prove" && /rilevato/.test(c.t)), JSON.stringify(rd.open.map((c) => c.key)));
+  // aggiornato e con validità futura: niente avviso; validità passata: scaduto
+  d.model.options[0].m!.c = { rel: "F", src: "contratto", dt: "2026-10-10", until: "2026-12-31" };
+  assert.ok(!E.readiness(d, E.analyzeDecision(d)).open.some((c) => c.key === "prove"));
+  d.model.options[0].m!.c.until = "2026-10-01";
+  const e2 = E.evidenceOf(d, E.analyzeDecision(d), "2026-10-12")!;
+  assert.ok(e2.expired === 1 && /scaduto/.test(e2.text), e2.text);
+  assert.ok(M.decisionDebt([d], [], {}, [], "2026-10-12").groups.some((g) => g.k === "dati"));
+  console.log("evidenze: dati che decidono, freschezza e scadenza ok");
+}
+{
+  // 63. contesto personale: lettura senza AI, revisione, pertinenza, privacy verso l'AI, suggerimenti sui pesi, quadro
+  const C = await import("../lib/context.ts");
+  const doc = `DECISION OS — CONTESTO PERSONALE
+## FATTI
+- [stabile] Vivo a Roma in una casa di proprietà
+## RISORSE
+- [fase] Liquidità disponibile | n=23.000 € | risorsa=liquidita
+## VINCOLI
+- [fase] Non posso restare senza reddito oltre 6 mesi | n=6 mesi
+## VALORI E PRIORITÀ
+- [stabile] La famiglia unita viene prima del lavoro | imp=5
+## REGOLE PERSONALI
+- Non uso più del 30% dei risparmi per un progetto
+## DA VERIFICARE
+- [fase] Possibile trasferimento a Ibiza | sensibile
+- [fase] …`;
+  const it = C.parseContext(doc, "test", "2026-10-12");
+  assert.deepEqual(it.map((x) => x.k), ["fatto", "risorsa", "vincolo", "valore", "regola", "incertezza"]);
+  assert.ok(it[1].n === 23000 && it[1].res === "cash0" && it[3].imp === 5 && it[5].priv && it.every((x) => x.st === "proposto"));
+  assert.equal(C.relevantCtx(it, { name: "Lavoro a Ibiza", descr: "famiglia" }).length, 0);   // non confermati: non si usano
+  const ok = it.map((x) => ({ ...x, st: "confermato" as const }));
+  const m = C.mergeCtx(ok, C.parseContext(doc));
+  assert.equal(m.dup, 6);   // lo stesso testo non entra due volte
+  const rel = C.relevantCtx(ok, { name: "Lavoro a Ibiza", descr: "Mi offrono un lavoro: la famiglia resterebbe a Roma" });
+  assert.ok(rel.some((x) => x.k === "valore") && rel.some((x) => x.k === "vincolo") && rel.some((x) => x.k === "regola"), JSON.stringify(rel.map((x) => x.t)));
+  const ai = C.ctxForAi(ok, false);
+  assert.ok(!ai.some((l) => /Ibiza/.test(l)) && !ai.some((l) => /23000|23\.000/.test(l)) && ai.some((l) => /6 mesi/.test(l)), JSON.stringify(ai));   // privato fuori, € fuori, mesi dentro
+  assert.ok(C.ctxForAi(ok, true).some((l) => /23000/.test(l)));
+  const hs = C.critHints(ok, [{ id: "f", name: "Famiglia unita", w: 0, imp: 3, kind: "g" }, { id: "r", name: "Reddito garantito", w: 0, imp: 4, kind: "g" }]);
+  assert.ok(hs.some((h) => h.crit === "f" && h.imp === 5) && hs.some((h) => h.crit === "r" && h.asConstraint), JSON.stringify(hs.map((h) => h.text)));
+  const ex = C.ctxFromAi({ e: [{ k: "fatto", t: "Ho un figlio" }, { k: "boh", t: "inventato" }, { k: "valore", t: "Salute prima", s: true, imp: 9 }] });
+  assert.ok(ex.length === 2 && ex[1].priv && ex[1].imp === undefined);
+  const decs = ["A", "B"].map((n) => ({ id: n, name: `Progetto ${n}`, status: "aperta" as const, imp: 1, model: { criteria: [], constraints: [], options: [{ id: "o", name: "Sì", s: {}, impacts: [{ r: "hours_w", v: -10 }] }] } }));
+  const pic = C.contextPicture([...ok, { id: "z", k: "progetto", t: "FleetUnit in sviluppo", layer: "fase", st: "proposto" }], decs, "2026-10-12");
+  assert.ok(pic.some((p) => /2 decisioni aperte consumano la stessa risorsa, tempo/.test(p)) && pic.some((p) => /aspetta la tua conferma/.test(p)), JSON.stringify(pic));
+  console.log("contesto: import, revisione, pertinenza, privacy, pesi, quadro ok");
 }

@@ -13,7 +13,9 @@ export type Impact = { r: string; v: number | [number, number, number]; tag?: st
 /** Voce dei conti. k: e = entrata, s = spesa. v = importo probabile (positivo); lo/hi = caso peggiore/migliore (facoltativi).
  *  u: true = una tantum. f: D = detto da te, S = stima (AI o tua), F = verificato. from = voce copiata dai conti di oggi. */
 export type Line = { id: string; t: string; k: "e" | "s"; v?: number | null; lo?: number | null; hi?: number | null; u?: boolean; f?: "D" | "S" | "F"; src?: "ai" | "user"; from?: string; note?: string };
-export type Meta = { why?: string; rel?: Rel; src?: string; dt?: string };
+/** Prova di un dato: rel = affidabilità (F verificato, D dichiarato, S stima); src = da chi o da dove (proprietario, CRM, contratto);
+ *  dt = data in cui il dato è stato rilevato; doc = documento o link; until = fino a quando vale (offerta, preventivo, contratto). */
+export type Meta = { why?: string; rel?: Rel; src?: string; dt?: string; doc?: string; until?: string };
 /** Una tappa di «cosa succede dopo» se scegli questa strada. h = mesi (1 = entro 30 giorni). */
 /** Area di una conseguenza: libera, proposta per tipo di scelta (soldi, clienti, salute…). */
 export type Area = string;
@@ -100,7 +102,29 @@ export type Model = {
   areas?: Area[];       // aree delle conseguenze (se assenti: preset per tipo)
   tipo?: string;   // tipo di scelta riconosciuto (lavoro, casa, morale…)
   nota?: string;   // cosa conta poco in questa scelta, secondo l'Analista
+  /** piano operativo: per ogni passo (chiave della verifica, o «t_…» per i passi tuoi) chi, entro quando, dopo cosa, quando è fatto */
+  act?: Record<string, PlanStep>;
+  /** monitoraggio dopo la scelta: «questa scelta regge finché…» */
+  watch?: Watch[];
+  /** quante volte hai spostato in avanti la data entro cui decidere */
+  rinvii?: number;
+  /** elementi del contesto personale che hai escluso da questa decisione */
+  cxOff?: string[];
+  /** riaperture: quando e perché una decisione presa è tornata aperta */
+  reopened?: { at: string; why: string }[];
 };
+/** Condizione di revisione. k: num = un valore osservato contro una soglia (op, v); cond = una condizione che deve restare vera;
+ *  rischio = un evento che non deve succedere; libero = una frase tua che deve restare vera.
+ *  obs = osservazioni nel tempo (v per i numeri, ok per sì/no: ok = «ancora vero» per cond/libero, «è successo» per rischio).
+ *  every = ogni quanti giorni ricontrollarla. */
+export type Watch = {
+  id: string; t: string; k: "num" | "cond" | "rischio" | "libero"; src?: "auto" | "user";
+  opt?: string; crit?: string; cond?: string; risk?: string; metric?: string;
+  op?: "<" | ">"; v?: number; unit?: string; every?: number; from?: string;
+  obs?: { at: string; v?: number; ok?: boolean }[];
+};
+/** ph: prima della decisione o dopo la scelta (attuazione). t solo per i passi aggiunti da te. done = data in cui è stato fatto. */
+export type PlanStep = { t?: string; ph?: "prima" | "dopo"; who?: string; due?: string; dep?: string; done?: string };
 export type Decision = {
   id: string; name: string; descr?: string; status: "aperta" | "presa" | "archiviata";
   imp: number; due?: string | null; model: Model;
@@ -550,7 +574,7 @@ export function biasChecks(dec: Decision, r: DecResult): Bias[] {
   if (nc >= 2 && nc > np)
     out.push({ k: "contro", t: `Per ${A.name} hai ${nc} contro e ${np} pro, eppure è prima. I contro sono già tutti dentro i criteri, o ce n'è qualcuno che stai ignorando?` });
   // 4. manca l'alternativa di non cambiare
-  if (!dec.model.options.some((o) => isStatusQuo(o) || o.kd === "rinvio" || o.kd === "cerca" || /com'è|status quo|\bresto\b|restare|come ora|come adesso|rimango|rimanere|non (cambio|faccio|assumo|compro|mi iscrivo|prendo)|aspett|rimand|tengo|lascio/i.test(o.name)))
+  if (!dec.model.options.some((o) => isStatusQuo(o) || o.kd === "rinvio" || o.kd === "cerca" || /com'è|status quo|\bresto\b|restare|come ora|come adesso|rimango|rimanere|\bnon (cambio|faccio|assumo|compro|mi iscrivo|prendo)|aspett|rimand|tengo|lascio/i.test(o.name)))
     out.push({ k: "statusquo", t: "Tra le alternative manca «lasciare tutto com'è». Senza un confronto con lo stato attuale ogni novità sembra migliore di quello che è." });
   // 5. margine minimo con un solo criterio decisivo: decisione di pancia mascherata
   if ((r.margin ?? 0) > 0 && (r.margin ?? 0) < 2)
@@ -569,8 +593,25 @@ const R_AFTER = new RegExp(`(\\b${MKW}\\b[^\\d\\n;]{0,30}?)(?:${MNUM})`, "gi");
 const R_BEFORE = new RegExp(`(?:${MNUM})(?=(?:\\s+[^\\s\\d]+){0,4}?\\s+${MKW}\\b)`, "gi");
 const R_PERIOD = new RegExp(`(?:${MNUM})(?=\\s*(?:\\/\\s*mese|al mese|a mese|mensil\\w*|l'anno|all'anno|annu\\w*|\\/\\s*anno))`, "gi");
 
+// Importi in lettere: «quarantamila euro», «quaranta mila euro», «RAL di trentacinquemila», «duemilacinquecento al mese».
+// Una parola-numero è fatta solo di pezzi di numerale; perché sia un importo serve una grandezza (decine, centinaia, migliaia)
+// e un contesto di soldi (euro, lordi, al mese, una parola come stipendio o affitto): «tre figli» o «sei mesi» restano intatti.
+const NW_P = "(?:diciassette|diciannove|quattordici|diciotto|quindici|tredici|dodici|undici|sedici|dieci|quattro|cinque|sette|nove|otto|sei|tre|due|uno|un|vent[i]?|trent[a]?|quarant[a]?|cinquant[a]?|sessant[a]?|settant[a]?|ottant[a]?|novant[a]?|cento|cent|mille|mila|milion[ei]|miliard[oi]|mezzo|e)";
+const NW_T = `(?:${NW_P})+`;
+const NW_SEQ = `\\b${NW_T}(?:\\s+(?:e\\s+)?${NW_T})*\\b`;
+const NW_BIG = /vent|trent|quarant|cinquant|sessant|settant|ottant|novant|cent|mil|miliard/i;
+const NW_CUE_AFTER = "\\s*(?:di\\s+)?(?:€|euro\\b|eur\\b|lord[oi]|nett[oi]|al mese|a mese|all'anno|l'anno|annu\\w*|mensil\\w*)";
+const R_NW_AFTER = new RegExp(`${NW_SEQ}(?=${NW_CUE_AFTER})`, "giu");
+const R_NW_KW = new RegExp(`(\\b${MKW}\\b[^\\d\\n;.]{0,30}?)(${NW_SEQ})`, "giu");
+const R_NW_BEFORE = new RegExp(`${NW_SEQ}(?=(?:\\s+[^\\s\\d]+){0,4}?\\s+${MKW}\\b)`, "giu");
+const nwOk = (m: string) => NW_BIG.test(m) && !/^(?:e|un|uno|mezzo)$/i.test(m.trim());
+
 export function redactMoney(t: string): string {
   let x = t
+    .replace(R_NW_AFTER, (m) => (nwOk(m) ? "[cifra]" : m))
+    .replace(R_NW_KW, (all, pre: string, m: string) => (nwOk(m) ? `${pre}[cifra]` : all))
+    .replace(R_NW_BEFORE, (m) => (nwOk(m) ? "[cifra]" : m));
+  x = x
     .replace(/€\s*\d(?:[\d.,']*\d)?(\s*(k|mila)\b)?/gi, "[cifra]")
     .replace(/\d(?:[\d.,']*\d)?(\s*(k|mila))?\s*(€|euro\b|eur\b)/gi, "[cifra]")
     .replace(/\b\d+(?:[.,]\d+)?\s*k\b/gi, "[cifra]");
@@ -613,7 +654,13 @@ const niceRound = (x: number, span: number) => {
 export function infoValue(dec: Decision): InfoItem[] {
   const nm = normalize(dec.model);
   const out: InfoItem[] = [];
-  const leader = (model: Model) => analyzeDecision({ ...dec, model }).rows.find((x) => !x.excluded.length)?.id ?? "-";
+  // chi è in testa: stesso ordinamento di analyzeDecision (punteggio arrotondato, a parità vince la prima), senza la sensibilità che qui non serve
+  const leader = (model: Model) => {
+    const { criteria: crit, constraints: cons, options } = normalize(model);
+    let best = "-", bs = -Infinity;
+    for (const x of options) { if (feasible(x, cons, crit).why.length) continue; const sc = r1(score(x, crit)); if (sc > bs) { bs = sc; best = x.id; } }
+    return best;
+  };
   const nameOf = (id: string) => (id === "-" ? "nessuna (tutte scartate)" : dec.model.options.find((o) => o.id === id)?.name ?? id);
   for (const o of dec.model.options.filter((x) => !isOut(x))) {
     for (const c of nm.criteria) {
@@ -629,9 +676,10 @@ export function infoValue(dec: Decision): InfoItem[] {
       if (kind === "stima") { a = Math.max(lo, cur! - span / 4); b = Math.min(hi, cur! + span / 4); if (cur! < lo || cur! > hi) { a = cur! - span / 4; b = cur! + span / 4; } }
       const pts = c.kind === "g" ? [0, 25, 50, 75, 100].filter((v) => v >= a - 0.1 && v <= b + 0.1) : Array.from({ length: 17 }, (_, i) => a + ((b - a) * i) / 16);
       const at = (v: number) => {
-        const mm: Model = JSON.parse(JSON.stringify(dec.model));
+        // copia solo la strada che cambia: le altre restano condivise (nessuno le modifica)
+        const mm: Model = { ...dec.model, options: dec.model.options.map((x) => (x.id === o.id ? { ...x, s: { ...x.s }, raw: { ...(x.raw ?? {}) } } : x)) };
         const oo = mm.options.find((x) => x.id === o.id)!;
-        if (isNum) (oo.raw ??= {})[c.id] = v; else (oo.s ??= {})[c.id] = v;
+        if (isNum) oo.raw![c.id] = v; else oo.s[c.id] = v;
         return leader(mm);
       };
       const tops = pts.map(at);
@@ -734,10 +782,37 @@ export function focus(dec: Decision, r: DecResult, turns: Turn[] = [], info?: In
 export type Dilemma = { msg: string; sugg: { kd: PlanKind; name: string; why: string }[]; stale?: boolean };
 /** Impronta del contesto su cui hai dichiarato chiuso lo spazio delle alternative: racconto + strade attive (nome e tipo). */
 export const closedHash = (dec: Decision) => hashOf({ t: (dec.descr ?? "").trim(), o: dec.model.options.filter((o) => !isOut(o)).map((o) => `${norm2(o.name)}|${o.kd ?? "base"}`).sort() });
-const SQ = /\b(resto|rest[ao] (dove|com)|rifiut|lascio|lasciare|com'è|com’è|fermo|non (faccio|accetto|cambio)|niente|rimango|status quo)/i;
+const SQ = /^\s*non\s+(?!ora\b|solo\b|subito\b)\p{L}|\b(resto|rest[ao] (dove|com)|rifiut|lascio|lasciare|com'è|com’è|fermo|non (faccio|accetto|cambio)|niente|rimango|status quo)/iu;
 // se hai indicato un tipo diverso (temporanea, prova…), il nome non basta a farne uno status quo («Resto in affitto 2 anni» è temporanea)
 export const isStatusQuo = (o: Opt) => o.kd === "sq" || ((!o.kd || o.kd === "base") && SQ.test(o.name));
 const norm2 = (s: string) => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+
+/** Tipi di decisione (classificati dall'Analista o scelti da te) e la loro famiglia.
+ *  Il dominio è un input del motore, non un'assunzione: senza tipo la famiglia è «sconosciuta» e il motore non inventa strade. */
+export const TIPO_L: Record<string, string> = { lavoro: "Lavoro", casa: "Casa", acquisto: "Acquisto", soldi: "Soldi", progetto: "Progetto", fornitore: "Fornitore", persona: "Assunzione", auto: "Auto o mezzo", studio: "Studio", famiglia: "Famiglia", relazioni: "Relazioni", morale: "Scelta morale", salute: "Salute", altro: "Altro" };
+export type Fam = "pratica" | "valori" | "salute" | "ignota";
+const FAM: Record<string, Fam> = { lavoro: "pratica", casa: "pratica", acquisto: "pratica", soldi: "pratica", progetto: "pratica", fornitore: "pratica", persona: "pratica", auto: "pratica", studio: "pratica", famiglia: "pratica", relazioni: "valori", morale: "valori", salute: "salute" };
+export const famOf = (tipo?: string | null): Fam => FAM[tipo ?? ""] ?? "ignota";
+
+/** Strade intermedie proposte quando mancano, per famiglia. Le scelte pratiche hanno condizioni, prove e alternative;
+ *  in una scelta morale o in una relazione il passo intermedio è il come (tempi, modi, persone) e un confronto prima;
+ *  in salute un parere qualificato in più, mai un esperimento. Famiglia ignota: nessuna proposta automatica. */
+function dilemmaCand(tipo: string | undefined, L: string, sq: boolean): Dilemma["sugg"] {
+  const fam = famOf(tipo);
+  if (fam === "ignota") return [];
+  if (fam === "salute") return [
+    { kd: "rinvio", name: "Prima di decidere: sento un secondo parere qualificato", why: "Su una scelta di salute il passo intermedio più utile è un parere in più di chi può darlo, non un esperimento fai da te." },
+  ];
+  if (fam === "valori") return [
+    { kd: "cond", name: `${L}, ma scegliendo bene come (tempi, modi, persone coinvolte)`, why: "Spesso la questione non è se farlo ma come: con chi, quando, con quali parole e con quali tutele per te e per gli altri." },
+    { kd: "rinvio", name: "Prima di decidere: ne parlo con una persona di fiducia", why: "Una scelta che tocca valori e relazioni guadagna da un confronto prima, senza impegnarti: a volte cambia la domanda stessa." },
+  ];
+  return [
+    { kd: "cond", name: `${L}, solo a condizioni`, why: "Dici sì solo se le condizioni che per te sono irrinunciabili sono garantite, meglio per iscritto." },
+    { kd: "prova", name: `${L} in prova o in piccolo, con verifica e uscita`, why: "Provi per un periodo o su scala ridotta (prova, pilota, test), con una data di verifica e un modo concreto per tornare indietro." },
+    ...(sq ? [{ kd: "cerca" as PlanKind, name: "Non ora: cerco attivamente un'alternativa", why: "Restare fermo diventa una strada attiva: cerchi un'altra opzione, con una scadenza." }] : []),
+  ];
+}
 
 export function falseDilemma(dec: Decision): Dilemma | null {
   const all = dec.model.options;
@@ -749,11 +824,7 @@ export function falseDilemma(dec: Decision): Dilemma | null {
   const sq = opts.some(isStatusQuo);
   const L = (opts.find((o) => !isStatusQuo(o) && (!o.kd || o.kd === "base")) ?? opts[0]).name;
   const sugg: Dilemma["sugg"] = [];
-  const cand: Dilemma["sugg"] = [
-    { kd: "cond", name: `${L}, solo a condizioni`, why: "Dici sì solo se le condizioni chiave (soldi, casa, tempi) sono garantite, meglio per iscritto." },
-    { kd: "prova", name: `${L} in prova o in piccolo, con verifica e uscita`, why: "Provi per un periodo o su scala ridotta (prova, pilota, test), con una data di verifica e un modo concreto per tornare indietro." },
-    ...(sq ? [{ kd: "cerca" as PlanKind, name: "Non ora: cerco attivamente un'alternativa", why: "Restare fermo diventa una strada attiva: cerchi un'altra opzione, con una scadenza." }] : []),
-  ];
+  const cand = dilemmaCand(dec.model.tipo, L, sq);
   for (const c of cand) if (!has(c.kd, c.name)) sugg.push(c);
   const binary = opts.length <= 2;
   // resta visibile finché c'è anche una sola strada plausibile non considerata, oppure finché non dichiari che non ce ne sono altre
@@ -761,11 +832,15 @@ export function falseDilemma(dec: Decision): Dilemma | null {
   const cl = dec.model.closed;
   // una chiusura senza impronta (versioni precedenti) non è verificabile: va riconfermata una volta
   const stale = !!cl && cl.hash !== closedHash(dec);
-  if ((cl && !stale) || !(binary || sq) || !sugg.length) return null;
-  const msg = !binary
+  const fam = famOf(dec.model.tipo);
+  // famiglia ignota: niente proposte inventate; l'avviso resta solo se le strade sono davvero due
+  if ((cl && !stale) || !(binary || sq) || (fam === "ignota" ? !binary : !sugg.length)) return null;
+  const msg = fam === "ignota"
+    ? `Ci sono solo due strade e non è ancora chiaro che tipo di decisione è: per proporti strade intermedie adatte devo saperlo. Indica il tipo (in «Dettagli») o chiedi all'Analista di proporre le strade; puoi anche aggiungerne una tu o dichiarare che non ce ne sono altre.`
+    : !binary
     ? `Hai già più strade, ma una proposta non è ancora stata valutata: ${sugg.map((x) => `«${x.name}»`).join(", ")}. Aggiungila, segnala che non è perseguibile o dichiara chiuso lo spazio delle alternative.`
     : sq && binary
-    ? `Stai confrontando «${L}» con il restare dove sei: quasi sempre è un falso dilemma. Le scelte reali hanno strade intermedie, che spesso sono le migliori.`
+    ? `Stai confrontando «${L}» con ${fam === "pratica" ? "il restare dove sei" : "il lasciare le cose come stanno"}: quasi sempre è un falso dilemma. Le scelte reali hanno strade intermedie, che spesso sono le migliori.`
     : binary ? "Ci sono solo due strade: probabilmente ne mancano." : "Manca almeno una strada intermedia tra sì e no.";
   return stale
     ? { msg: `Hai modificato la decisione da quando avevi dichiarato chiuso lo spazio delle alternative (${new Date(cl!.at).toLocaleDateString("it-IT")}): conferma che non esistono nuove strade perseguibili. ${msg}`, sugg, stale }
@@ -774,10 +849,10 @@ export function falseDilemma(dec: Decision): Dilemma | null {
 
 /* ---------- Decisione condizionata ---------- */
 export type CondKind = "utente" | "requisito" | "dato" | "liquidita" | "stimeAI" | "basi" | "doppio";
-export type CondKind2 = CondKind | "scenario" | "rischio" | "dilemma" | "rev";
+export type CondKind2 = CondKind | "scenario" | "rischio" | "dilemma" | "rev" | "prove";
 /** grp: «cond» = se è falsa la strada non regge; «chiarire» = l'analisi non è ancora abbastanza affidabile. */
 export type VoiView = { key: string; power: number; c?: "facile" | "medio" | "difficile"; days?: number | null; worth: "si" | "forse" | "no" | "?"; late: boolean };
-export type CondView = { key: string; t: string; how: string; gate: boolean; kind: CondKind2; grp: "cond" | "chiarire"; optId?: string; condId?: string; st?: Cond["st"]; voi?: VoiView };
+export type CondView = { key: string; t: string; how: string; gate: boolean; kind: CondKind2; grp: "cond" | "chiarire"; optId?: string; condId?: string; st?: Cond["st"]; voi?: VoiView; critId?: string; riskId?: string };
 export type Ready = {
   state: "vuota" | "nessuna" | "non_pronta" | "pronta";
   lead?: { id: string; name: string };
@@ -817,7 +892,7 @@ export function readiness(dec: Decision, r: DecResult, base: Resources = {}, rul
   const hot = (info ?? infoValue(dec)).filter((x) => x.flips).map((i) => ({ i, v: voiOf(dec, "d" + i.opt + i.crit, i.share, wv) }))
     .sort((a, b) => voiRank(b.v) - voiRank(a.v)).slice(0, 3);
   for (const { i, v } of hot)
-    open.push({ key: "d" + i.opt + i.crit, voi: v,
+    open.push({ key: "d" + i.opt + i.crit, voi: v, critId: i.crit,
       // una soglia su una cifra è una condizione; un giudizio ancora stimato è una cosa da chiarire
       grp: i.num ? "cond" : "chiarire",
       t: !i.num
@@ -835,8 +910,8 @@ export function readiness(dec: Decision, r: DecResult, base: Resources = {}, rul
   if ((o.impacts ?? []).some((i) => i.src === "ai")) open.push({ key: "ai", t: `Gli importi su soldi e tempo di ${L.name} sono confermati da te, non solo stimati dall'AI`, how: "Conferma o correggi gli importi al passo «Soldi e tempo»", gate: false, kind: "stimeAI", grp: "chiarire", optId: L.id });
   uo.filter((c) => !c.gate).forEach((c) => open.push(c));
   for (const rk of riskViews(o, base, rules).filter((x) => x.p !== "bassa")) {
-    if (rk.breaks.length) open.push({ key: "rk" + rk.id, t: `Reggi il rischio «${rk.t}» (se succede: ${eur(rk.tot)}): oggi ti porterebbe oltre i tuoi limiti (${rk.breaks.join("; ")})`, how: rk.x ? `Riduci il rischio «${rk.t}»: ${rk.x}` : `Prepara un cuscinetto o una contromisura per «${rk.t}»`, gate: false, kind: "rischio", grp: "cond", optId: o.id });
-    else if (rk.p === "alta" && !rk.x) open.push({ key: "rx" + rk.id, t: `Rischio alto senza contromisura: «${rk.t}»${rk.tot ? ` (se succede: ${eur(rk.tot)})` : ""}`, how: `Decidi cosa faresti se succede «${rk.t}» e scrivilo nel registro dei rischi`, gate: false, kind: "rischio", grp: "chiarire", optId: o.id });
+    if (rk.breaks.length) open.push({ key: "rk" + rk.id, t: `Reggi il rischio «${rk.t}» (se succede: ${eur(rk.tot)}): oggi ti porterebbe oltre i tuoi limiti (${rk.breaks.join("; ")})`, how: rk.x ? `Riduci il rischio «${rk.t}»: ${rk.x}` : `Prepara un cuscinetto o una contromisura per «${rk.t}»`, gate: false, kind: "rischio", grp: "cond", optId: o.id, riskId: rk.id });
+    else if (rk.p === "alta" && !rk.x) open.push({ key: "rx" + rk.id, t: `Rischio alto senza contromisura: «${rk.t}»${rk.tot ? ` (se succede: ${eur(rk.tot)})` : ""}`, how: `Decidi cosa faresti se succede «${rk.t}» e scrivilo nel registro dei rischi`, gate: false, kind: "rischio", grp: "chiarire", optId: o.id, riskId: rk.id });
   }
   const sol = solidity(dec, r);
   if (sol && sol.estShare + sol.unkShare >= 50) open.push({ key: "basi", t: 100 - sol.estShare - sol.unkShare <= 0 ? `Nessuna parte del punteggio di ${L.name} poggia su dati certi o dichiarati: è tutto stime o valori senza fonte` : `Solo il ${100 - sol.estShare - sol.unkShare}% del punteggio di ${L.name} poggia su dati certi o dichiarati; il ${sol.estShare + sol.unkShare}% deriva da stime o valori senza fonte`, how: "Rendi certi i valori che pesano di più e indica da dove vengono", gate: false, kind: "basi", grp: "chiarire", optId: L.id });
@@ -852,8 +927,13 @@ export function readiness(dec: Decision, r: DecResult, base: Resources = {}, rul
     if (od && (x.id === L.id || x.id === fallback?.id))
       open.push({ key: "sc" + x.id, t: `Per ${x.name} «se va male» è ${eur(od.sf)}/mese contro ${eur(od.c)}/mese probabili: è la stessa strada andata peggio (es. meno clienti) o un altro evento (es. perdere lo stipendio)?`, how: `Al passo «Soldi e tempo» conferma che è la stessa strada andata peggio, oppure correggilo e rendi l'altro evento un rischio a parte`, gate: false, kind: "scenario", grp: "chiarire", optId: x.id });
   }
+  const ev = evidenceOf(dec, r);
+  if (ev && ev.opt === L.id && (ev.old || ev.expired)) {
+    const bad = ev.items.filter((x) => x.old || x.expired);
+    open.push({ key: "prove", t: `Su ${L.name} pesano dati non più attuali: ${bad.map((x) => `«${x.name}» ${x.expired ? `valido fino al ${new Date(x.until!).toLocaleDateString("it-IT")}` : `rilevato ${x.age} giorni fa`}`).join("; ")}`, how: "Aggiorna i dati scaduti o vecchi che pesano di più (passo «Valuta», fonte e data)", gate: false, kind: "prove", grp: "chiarire", optId: L.id });
+  }
   // un falso dilemma impedisce «Pronta»: la scelta migliore tra strade incomplete non è una decisione pronta
-  if (dilemma) open.push({ key: "dil", t: dilemma.msg, how: `Al passo «Strade» aggiungi o segna come non perseguibili le strade proposte (${dilemma.sugg.map((x) => `«${x.name}»`).join(", ")}), oppure dichiara che non esistono altre strade realisticamente perseguibili`, gate: false, kind: "dilemma", grp: "chiarire" });
+  if (dilemma) open.push({ key: "dil", t: dilemma.msg, how: dilemma.sugg.length ? `Al passo «Strade» aggiungi o segna come non perseguibili le strade proposte (${dilemma.sugg.map((x) => `«${x.name}»`).join(", ")}), oppure dichiara che non esistono altre strade realisticamente perseguibili` : "Indica il tipo di decisione (in «Dettagli») o chiedi all'Analista le strade; oppure aggiungi tu una strada intermedia o dichiara che non esistono altre strade perseguibili", gate: false, kind: "dilemma", grp: "chiarire" });
   const rv = revCheck(dec, r, base);
   if (rv) open.push({ key: "rev", t: rv.t, how: rv.how, gate: false, kind: "rev", grp: "chiarire", optId: L.id });
   const lrv = revOf(o, base);
@@ -966,15 +1046,18 @@ export function syncConti(m: Model): Model {
 }
 
 /* ---------- Costo del non decidere ---------- */
-export type WaitView = { left: number | null; m: number; c7: number; c30: number; c90: number; exp: { id: string; name: string; days: number }[]; t?: string };
+/** left = giorni alla prima scadenza ancora futura (0 = oggi); over = giorni passati dalla data che ti eri dato, se è già passata. */
+export type WaitView = { left: number | null; over?: number; m: number; c7: number; c30: number; c90: number; exp: { id: string; name: string; days: number }[]; t?: string };
 /** Giorni di calendario da oggi a una data (oggi = 0). */
 export const daysTo = (iso: string) => Math.round((Date.parse(iso.slice(0, 10)) - Date.parse(new Date().toISOString().slice(0, 10))) / 86400000);
 /** Quanto costa aspettare 7/30/90 giorni: € persi al mese (indicati da te) e strade che scadono nel frattempo. */
 export function waitView(dec: Decision): WaitView {
   const m = Math.abs(dec.model.wait?.m ?? 0);
   const exp = dec.model.options.filter((o) => o.exp && !isOut(o)).map((o) => ({ id: o.id, name: o.name, days: daysTo(o.exp!) })).filter((x) => x.days >= 0).sort((a, b) => a.days - b.days);
-  const lefts = [dec.due ? daysTo(dec.due) : null, exp[0]?.days ?? null].filter((x): x is number => x != null);
-  return { left: lefts.length ? Math.min(...lefts) : null, m, c7: Math.round((m * 7) / 30), c30: m, c90: m * 3, exp, t: dec.model.wait?.t };
+  const due = dec.due ? daysTo(dec.due) : null;
+  // una data già passata non è «-20 giorni»: è una scadenza superata, da aggiornare o da rispettare subito
+  const lefts = [due != null && due >= 0 ? due : null, exp[0]?.days ?? null].filter((x): x is number => x != null);
+  return { left: lefts.length ? Math.min(...lefts) : null, ...(due != null && due < 0 ? { over: -due } : {}), m, c7: Math.round((m * 7) / 30), c30: m, c90: m * 3, exp, t: dec.model.wait?.t };
 }
 
 /* ---------- Valore dell'informazione: potere di ribaltare × costo per saperlo ---------- */
@@ -1021,4 +1104,132 @@ export function revCheck(dec: Decision, r: DecResult, base: Resources = {}): { t
       return { t: `«${L.name}» ${gap > 0 ? `supera «${o.name}» di soli ${fmt(gap)} punti` : `è alla pari con «${o.name}»`} ma è ${lr.irr ? "molto " : ""}più difficile da invertire (${lr.text}); «${o.name}» invece è ${orv.rev ? "reversibile" : "più reversibile"} (${orv.text})`, how: `${gap > 0 ? `Chiediti se ${fmt(gap)} punti valgono la minore reversibilità` : `A parità di punteggio parti dalla strada più facile da invertire`}, oppure rendi «${L.name}» più reversibile (clausola di uscita, periodo di prova)` };
   }
   return null;
+}
+
+/* ---------- Previsione e consuntivo: imparare dai propri errori di stima ---------- */
+/** Fotografia di ciò che prevedevi per la strada scelta, salvata quando registri la decisione. Chiavi brevi: finisce nel database per ogni decisione. */
+export type Pred = {
+  v: 1;
+  sc: number; pos: number; top: boolean; gap: number; n: number;   // punteggio, posizione, era la prima del modello, distacco dalla prima, strade valutate
+  cert: number;                     // % del punteggio su dati certi o dichiarati
+  c0: number | null;                // spesa (−) o entrata (+) iniziale prevista, caso probabile
+  m: [number, number, number] | null;   // differenza mensile prevista: se va male, probabile, se va bene
+  cap: number | null; irr: boolean | null;   // capitale a rischio e se era difficile da invertire
+  kd?: PlanKind;
+  rs: { id: string; t: string; p: RiskP; tot: number }[];   // rischi previsti, impatto se succede
+};
+/** Cosa è successo davvero, con gli stessi campi della previsione. hit: rischio → impatto reale in € (0 = successo senza costi); assente = non è successo. ok = esito 1-5. */
+export type Act = { c0?: number | null; m?: number | null; hit?: Record<string, number>; ok?: number | null };
+
+const central = (v: Impact["v"] | undefined) => (v == null ? null : Array.isArray(v) ? v[1] : v);
+export function predOf(dec: Decision, r: DecResult, optId: string, base: Resources = {}): Pred | null {
+  const o = dec.model.options.find((x) => x.id === optId);
+  const row = r.rows.find((x) => x.id === optId);
+  if (!o || !row) return null;
+  const ok = r.rows.filter((x) => !x.excluded.length);
+  const lead = ok[0] ?? r.rows[0];
+  const tot = row.detail.reduce((a, d) => a + (d.contrib ?? 0), 0);
+  const firm = row.detail.filter((d) => d.meta?.rel === "F" || d.meta?.rel === "D").reduce((a, d) => a + (d.contrib ?? 0), 0);
+  const imp = (k: string) => (o.impacts ?? []).find((i) => i.r === k);
+  const cd = contiDelta(o, dec.model.oggi ?? []);
+  const mi = imp("cash_m");
+  const m = mi ? (Array.isArray(mi.v) ? mi.v : [mi.v, mi.v, mi.v]) as [number, number, number] : cd ? cd.delta : null;
+  const c0 = central(imp("cash0")?.v) ?? (cd?.once || null);
+  const rv = revOf(o, base);
+  return {
+    v: 1, sc: Math.round(row.score * 10) / 10, pos: Math.max(1, ok.findIndex((x) => x.id === optId) + 1), top: lead?.id === optId,
+    gap: Math.round(((lead?.score ?? row.score) - row.score) * 10) / 10, n: ok.length,
+    cert: tot > 0 ? Math.round((firm / tot) * 100) : 0,
+    c0, m, cap: rv ? rv.cap : null, irr: rv ? rv.irr : null, kd: o.kd,
+    rs: (o.risks ?? []).map((x) => ({ id: x.id, t: x.t, p: x.p, tot: riskTotal(x) })),
+  };
+}
+
+/** Cosa insegnano le decisioni passate. Ogni frase dice su quanti casi si basa; sotto la soglia non dice nulla. */
+export const LEARN_MIN = 5;
+export type Lesson = { k: string; t: string; n: number };
+const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); const h = s.length >> 1; return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2; };
+const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+const f1 = (n: number) => n.toLocaleString("it-IT", { maximumFractionDigits: 1 });
+export function lessons(outs: { pred?: Pred | null; act?: Act | null }[], min = LEARN_MIN): Lesson[] {
+  const L: Lesson[] = [];
+  const done = outs.filter((o) => o.pred && o.act) as { pred: Pred; act: Act }[];
+  // 1. spesa iniziale: di quanto sbagli, in mediana
+  const c0 = done.filter((o) => o.pred.c0 != null && o.pred.c0 < 0 && o.act.c0 != null).map((o) => (Math.abs(o.act.c0!) - Math.abs(o.pred.c0!)) / Math.abs(o.pred.c0!));
+  if (c0.length >= min) {
+    const e = Math.round(median(c0) * 100);
+    L.push({ k: "c0", n: c0.length, t: Math.abs(e) < 10 ? `Le tue stime delle spese iniziali sono in linea con la realtà (scarto tipico ${e > 0 ? "+" : ""}${e}%).` : e > 0 ? `Sottostimi le spese iniziali: in genere costano il ${e}% in più di quanto prevedi.` : `Sovrastimi le spese iniziali: in genere costano il ${-e}% in meno di quanto prevedi.` });
+  }
+  // 2. differenza mensile: quanto spesso è andata peggio anche del caso «se va male»
+  const mm = done.filter((o) => o.pred.m && o.act.m != null);
+  if (mm.length >= min) {
+    const worse = mm.filter((o) => o.act.m! < o.pred.m![0]).length;
+    const d = Math.round(median(mm.map((o) => o.act.m! - o.pred.m![1])));
+    const pw = Math.round((worse / mm.length) * 100);
+    L.push({ k: "m", n: mm.length, t: `${d === 0 ? "Sul mensile le tue previsioni sono in linea con il caso probabile." : `Sul mensile in genere ti restano ${eur(Math.abs(d))} al mese ${d < 0 ? "in meno" : "in più"} del caso probabile che avevi previsto.`}${pw >= 20 ? ` Nel ${pw}% dei casi è andata peggio anche del tuo «se va male»: i tuoi scenari pessimisti non lo sono abbastanza.` : ""}` });
+  }
+  // 3. rischi per livello di probabilità: quanto spesso succedono e se pesano più del previsto
+  for (const p of ["bassa", "media", "alta"] as RiskP[]) {
+    const rs = done.flatMap((o) => o.pred.rs.filter((r) => r.p === p).map((r) => ({ r, hit: o.act.hit?.[r.id] })));
+    if (rs.length < min) continue;
+    const hit = rs.filter((x) => x.hit != null);
+    const ph = Math.round((hit.length / rs.length) * 100);
+    const exp = Math.round(RISK_W[p] * 100);
+    const priced = hit.filter((x) => x.hit !== 0 && x.r.tot < 0);   // successi con il costo reale indicato
+    const heavy = priced.filter((x) => x.hit! < x.r.tot);
+    let t = `I rischi che giudichi a probabilità ${p} si sono verificati nel ${ph}% dei casi (il motore li pesa al ${exp}%).`;
+    if (ph >= exp + 15) t += " Li sottovaluti.";
+    else if (ph <= exp - 15) t += " Sei prudente.";
+    if (priced.length >= 3 && heavy.length / priced.length >= 0.5) t += ` Quando succedono, nel ${Math.round((heavy.length / priced.length) * 100)}% dei casi costano più di quanto avevi scritto.`;
+    L.push({ k: `r_${p}`, n: rs.length, t });
+  }
+  // 4. dati verificati ed esito
+  const ok = done.filter((o) => o.act.ok != null);
+  const hi = ok.filter((o) => o.pred.cert >= 50), lo = ok.filter((o) => o.pred.cert < 50);
+  if (ok.length >= min && hi.length >= 3 && lo.length >= 3) {
+    const a = avg(hi.map((o) => o.act.ok!)), b = avg(lo.map((o) => o.act.ok!));
+    L.push({ k: "cert", n: ok.length, t: `Decisioni prese con almeno metà dei dati verificati: esito medio ${f1(a)}/5 (${hi.length} casi); con meno: ${f1(b)}/5 (${lo.length} casi).${Math.abs(a - b) < 0.5 ? " Per ora nessuna differenza chiara." : ""}` });
+  }
+  // 5. quando scegli contro il modello
+  const yes = ok.filter((o) => o.pred.top), no = ok.filter((o) => !o.pred.top);
+  if (ok.length >= min && yes.length >= 3 && no.length >= 3) {
+    const a = avg(yes.map((o) => o.act.ok!)), b = avg(no.map((o) => o.act.ok!));
+    L.push({ k: "top", n: ok.length, t: `Quando segui la prima del modello l'esito medio è ${f1(a)}/5 (${yes.length} casi); quando scegli altro ${f1(b)}/5 (${no.length} casi).${Math.abs(a - b) < 0.5 ? " Per ora nessuna differenza chiara." : b > a ? " Il tuo istinto aggiunge qualcosa che il modello non vede: chiediti quale criterio manca." : ""}` });
+  }
+  return L;
+}
+
+/* ---------- Evidenze: su quali dati poggia la decisione, e quanto sono freschi ---------- */
+export const STALE_DAYS = 90;
+export type EvItem = { opt: string; crit: string; name: string; val: string; share: number; rel?: Rel; src?: string; dt?: string; doc?: string; until?: string;
+  ai: boolean; age: number | null; old: boolean; expired: boolean; noSrc: boolean };
+export type Evidence = { opt: string; optName: string; items: EvItem[]; old: number; expired: number; est: number; noSrc: number; text: string } | null;
+const ageDays = (iso: string, now: string) => Math.round((Date.parse(now) - Date.parse(iso.slice(0, 10))) / 86400000);
+/** I dati che pesano di più nel punteggio della strada scelta (o in testa): almeno 3, fino a coprire il 70% del punteggio. */
+export function evidenceOf(dec: Decision, r: DecResult, now = new Date().toISOString().slice(0, 10)): Evidence {
+  const ok = r.rows.filter((x) => !x.excluded.length);
+  const ch = dec.model.options.find((o) => o.st === "scelta");
+  const row = (ch && r.rows.find((x) => x.id === ch.id)) || ok[0];
+  if (!row) return null;
+  const o = dec.model.options.find((x) => x.id === row.id)!;
+  const tot = row.detail.reduce((a, d) => a + (d.contrib ?? 0), 0);
+  if (!tot) return null;
+  const ds = row.detail.filter((d) => d.contrib).sort((a, b) => (b.contrib ?? 0) - (a.contrib ?? 0));
+  const pick: typeof ds = [];
+  let cum = 0;
+  for (const d of ds) { if (pick.length >= 3 && cum >= tot * 0.7) break; pick.push(d); cum += d.contrib ?? 0; }
+  const items: EvItem[] = pick.map((d) => {
+    const mt = o.m?.[d.crit] ?? {};
+    const c = dec.model.criteria.find((x) => x.id === d.crit)!;
+    const val = c.kind === "num" && d.raw != null ? `${fmt(d.raw)}${c.unit ? " " + c.unit : ""}` : c.kind === "g" && d.s != null ? LEVELS[levelOf(d.s)] : d.s != null ? `${fmt(d.s)}/100` : "—";
+    const age = mt.dt ? ageDays(mt.dt, now) : null;
+    return { opt: o.id, crit: d.crit, name: d.name, val, share: Math.round(((d.contrib ?? 0) / tot) * 100), rel: mt.rel, src: mt.src, dt: mt.dt, doc: mt.doc, until: mt.until,
+      ai: /^Stima AI/.test(mt.why ?? ""), age, old: age != null && age > STALE_DAYS, expired: !!mt.until && mt.until < now, noSrc: !mt.rel && !mt.src };
+  });
+  const old = items.filter((x) => x.old).length, expired = items.filter((x) => x.expired).length, est = items.filter((x) => x.rel === "S").length, noSrc = items.filter((x) => x.noSrc).length;
+  const n = items.length;
+  const parts = [expired ? `${expired} ${expired === 1 ? "è scaduto" : "sono scaduti"}` : "", old ? `${old} ${old === 1 ? "ha" : "hanno"} più di ${STALE_DAYS} giorni` : "",
+    est ? `${est} ${est === 1 ? "è una stima" : "sono stime"}` : "", noSrc ? `${noSrc} senza fonte` : ""].filter(Boolean);
+  const text = `${ch ? "La tua scelta" : `«${o.name}»`} poggia soprattutto su ${n} ${n === 1 ? "dato" : "dati"} (${Math.round((cum / tot) * 100)}% del punteggio)${parts.length ? `: ${parts.join(", ")}.` : ", tutti con fonte e aggiornati."}`;
+  return { opt: o.id, optName: o.name, items, old, expired, est, noSrc, text };
 }

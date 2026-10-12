@@ -1,13 +1,15 @@
 "use client";
 import { useEffect, useMemo } from "react";
 import Link from "next/link";
+import { execPlan, type PlanItem } from "@/lib/execution";
+import { monitorOf, watchState } from "@/lib/monitor";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Printer, CheckCircle2, AlertTriangle, XCircle, ThumbsUp, ThumbsDown, Square } from "lucide-react";
 import { useWs } from "@/components/Workspace";
 import { ScoreBars, LineChart, Legend, PAL } from "@/components/charts";
 import {
   analyzeDecision, biasChecks, conclusive, cashBreakpoint, cashSeries, crossEffects, eur, fmt, hashOf, normalize, solidity, tradeoff, turningPoints,
-  LEVELS, SCEN, type Scen, untestedText, infoValue, readiness, focus, stopText, fallbackText, oddScenario, invertedScenario, contiDelta, saldo, isOut, OPT_ST, riskViews, riskSummary, phasesOf, snapPhase, customRes, PLAN_L } from "@/lib/engine";
+  LEVELS, SCEN, type Scen, untestedText, TIPO_L, evidenceOf, infoValue, readiness, focus, stopText, fallbackText, oddScenario, invertedScenario, contiDelta, saldo, isOut, OPT_ST, riskViews, riskSummary, phasesOf, snapPhase, customRes, PLAN_L } from "@/lib/engine";
 import { actionPlan, briefing, consequences, projection, valueText, HZ } from "@/lib/narrative";
 import { compact } from "@/lib/ai";
 import { PRI } from "@/lib/priorities";
@@ -16,7 +18,7 @@ import { BP } from "@/lib/bp";
 const TONE = { ok: <CheckCircle2 size={15} />, warn: <AlertTriangle size={15} />, bad: <XCircle size={15} /> };
 const SL: Record<Scen, string> = { sfavorevole: "Se va male", centrale: "Probabile", favorevole: "Se va bene" };
 const REL: Record<string, string> = { F: "certo", D: "dichiarato", S: "stima" };
-const TIPO: Record<string, string> = { lavoro: "Lavoro", casa: "Casa", acquisto: "Acquisto", soldi: "Soldi", progetto: "Progetto", relazioni: "Relazioni", famiglia: "Famiglia", salute: "Salute", studio: "Studio", morale: "Scelta morale", fornitore: "Fornitore", persona: "Assunzione", auto: "Auto o mezzo", altro: "Altro" };
+const TIPO = TIPO_L;
 
 export default function Report() {
   const { id } = useParams<{ id: string }>();
@@ -42,6 +44,10 @@ export default function Report() {
   }, [d]);
   if (!d || !data) return <div className="empty">Decisione non trovata. <Link href="/app/decisioni">Torna all&apos;elenco</Link></div>;
   const { res, nm, turns, concl, trade, sol, bias, plan, rd, foc } = data;
+  const pl = execPlan(d, rd);
+  const mon = monitorOf(d);
+  const ev = evidenceOf(d, res);
+  const who = (x: PlanItem) => (x.who || x.due || x.blocked ? <small className="muted"> — {[x.who, x.due ? `entro il ${new Date(x.due).toLocaleDateString("it-IT")}` : "", x.blocked ? `dopo: ${x.blocked}` : ""].filter(Boolean).join(" · ")}{x.late ? " (in ritardo)" : ""}</small> : null);
   const ST: Record<string, string> = { "?": "da verificare", si: "verificata", no: "non soddisfatta" };
   const m = d.model;
   const ok = res.rows.filter((r) => !r.excluded.length);
@@ -118,7 +124,7 @@ export default function Report() {
             {rd.dilemma && <><dt>Strade mancanti</dt><dd>{rd.dilemma.msg} Da considerare: {rd.dilemma.sugg.map((x) => `«${x.name}»`).join(", ")}.</dd></>}
             {foc && foc.calm.length > 0 && <><dt>Non cambia la scelta</dt><dd>{foc.calm.map((x) => `«${x.critName}» di ${x.optName}`).join(", ")}: qualunque valore plausibile abbiano.</dd></>}
             {rd.failed.length > 0 && <><dt>Non soddisfatte</dt><dd>{rd.failed.map((c) => c.t).join("; ")}.</dd></>}
-            {rd.wait && (rd.wait.m > 0 || rd.wait.exp.length > 0 || rd.wait.left != null) && <><dt>Costo dell&apos;attesa</dt><dd>{rd.wait.left != null ? `Restano ${rd.wait.left} giorni. ` : ""}{rd.wait.m > 0 ? `Aspettare costa circa ${eur(rd.wait.c30)} al mese (${eur(rd.wait.c7)} a 7 giorni, ${eur(rd.wait.c90)} a 90). ` : ""}{rd.wait.exp.map((x) => `«${x.name}» scade tra ${x.days} giorni. `).join("")}{rd.wait.t ?? ""}</dd></>}
+            {rd.wait && (rd.wait.m > 0 || rd.wait.exp.length > 0 || rd.wait.left != null || rd.wait.over != null) && <><dt>Costo dell&apos;attesa</dt><dd>{rd.wait.over != null ? `La data che ti eri dato è passata da ${rd.wait.over} ${rd.wait.over === 1 ? "giorno" : "giorni"}. ` : ""}{rd.wait.left != null ? (rd.wait.left === 0 ? "Scade oggi. " : `Restano ${rd.wait.left} ${rd.wait.left === 1 ? "giorno" : "giorni"}. `) : ""}{rd.wait.m > 0 ? `Aspettare costa circa ${eur(rd.wait.c30)} al mese (${eur(rd.wait.c7)} a 7 giorni, ${eur(rd.wait.c90)} a 90). ` : ""}{rd.wait.exp.map((x) => `«${x.name}» scade tra ${x.days} giorni. `).join("")}{rd.wait.t ?? ""}</dd></>}
             {rd.done.length > 0 && <><dt>Già verificate</dt><dd>{rd.done.map((c) => c.t).join("; ")}.</dd></>}
           </dl>
           <p className="rep-note">Questo report non decide al posto tuo: dice a quali condizioni una strada regge, cosa verificare prima e in che ordine. Il punteggio è solo una parte dell&apos;analisi (sezione «Il confronto»).</p>
@@ -154,16 +160,42 @@ export default function Report() {
           <div className="rep-pri">{Object.keys(PRI).map((k) => <span key={k}>{PRI[k].l} <b>{ws.profile.priorities[k] ?? 3}/5</b></span>)}</div>
         </section>
 
-        {/* PIANO ORDINATO */}
-        {rd.open.length > 0 && (
+        {/* PIANO OPERATIVO */}
+        {(pl.prima.length > 0 || pl.dopo.length > 0 || pl.fatti.length > 0) && (
           <section className="rsec">
-            <H t="Piano d'azione: prima di rispondere, in quest'ordine" />
+            <H t="Piano operativo" />
+            {pl.prima.length > 0 && <><h3>Prima di decidere, in quest&apos;ordine</h3>
             <ol className="rep-steps">
-              {rd.open.map((c) => <li key={c.key}><Square size={14} /> <span><b>{c.how}</b>{c.kind === "utente" || c.kind === "dato" ? <><br /><small className="muted">Serve per: {c.t}</small></> : null}{c.gate && <><br /><small className="rep-stop">{stopText(rd)}</small></>}</span></li>)}
+              {pl.prima.map((x) => <li key={x.key}><Square size={14} /> <span><b>{x.t}</b>{who(x)}{x.why ? <><br /><small className="muted">Serve per: {x.why}</small></> : null}{x.stop && <><br /><small className="rep-stop">{x.stop}</small></>}</span></li>)}
               <li><Square size={14} /> <span><b>Poi aggiorna i dati in Decision OS:</b> il risultato si ricalcola e ti dice se la decisione è pronta.</span></li>
-            </ol>
+            </ol></>}
+            {pl.dopo.length > 0 && <><h3>Dopo la scelta: attuazione</h3>
+            <ol className="rep-steps">{pl.dopo.map((x) => <li key={x.key}><Square size={14} /> <span><b>{x.t}</b>{who(x)}</span></li>)}</ol></>}
+            {pl.fatti.length > 0 && <><h3>Già fatti</h3>
+            <ul className="rep-steps">{pl.fatti.map((x) => <li key={x.key}>✓ <span>{x.t} <small className="muted">· {new Date(x.done!).toLocaleDateString("it-IT")}{x.who ? ` · ${x.who}` : ""}</small></span></li>)}</ul></>}
           </section>
         )}
+
+        {/* EVIDENZE */}
+        {ev && (
+          <section className="rsec">
+            <H t="Su cosa poggia" />
+            <p>{ev.text}</p>
+            <table className="rt"><thead><tr><th>Dato</th><th>Valore</th><th>Peso</th><th>Prova</th></tr></thead>
+              <tbody>{ev.items.map((x) => <tr key={x.crit}><td>{x.name}</td><td>{x.val}</td><td>{x.share}%</td>
+                <td>{x.rel === "F" ? "verificato" : x.rel === "D" ? "dichiarato" : x.rel === "S" ? (x.ai ? "stima AI" : "stima") : "senza fonte"}{[x.src, x.dt ? `del ${new Date(x.dt).toLocaleDateString("it-IT")}` : "", x.doc, x.until ? `${x.expired ? "scaduto" : "valido"} fino al ${new Date(x.until).toLocaleDateString("it-IT")}` : "", x.old ? `rilevato ${x.age} giorni fa` : ""].filter(Boolean).map((t) => " · " + t).join("")}</td></tr>)}</tbody></table>
+          </section>
+        )}
+
+        {/* MONITORAGGIO */}
+        {(m.watch?.length || m.reopened?.length) ? (
+          <section className="rsec">
+            <H t="Questa scelta regge finché…" />
+            {mon && <p><b>{mon.state === "rivedere" ? "Da rivedere: un presupposto non è più vero." : "In osservazione."}</b></p>}
+            <ul className="rep-steps">{(m.watch ?? []).map((w) => { const s = watchState(w); return <li key={w.id}>{s.hit ? "✗" : "○"} <span>{w.t} <small className="muted">· {s.hit ? "scattata" : s.last ? `ultimo controllo ${new Date(s.last.at).toLocaleDateString("it-IT")}` : "mai controllata"}{!s.hit ? `, prossimo ${new Date(s.next).toLocaleDateString("it-IT")}` : ""}</small></span></li>; })}</ul>
+            {m.reopened?.length ? <p className="muted">Riaperta: {m.reopened.map((x) => `${new Date(x.at).toLocaleDateString("it-IT")} (${x.why})`).join("; ")}.</p> : null}
+          </section>
+        ) : null}
 
         {/* CONSEGUENZE NEL TEMPO */}
         <section className="rsec">

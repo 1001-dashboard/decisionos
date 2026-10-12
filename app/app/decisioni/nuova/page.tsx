@@ -11,23 +11,26 @@ import { useWs } from "@/components/Workspace";
 import { Top } from "@/components/Shell";
 import { ai, structToModel, type AiStruct } from "@/lib/ai";
 import { exampleDecision } from "@/lib/demo";
-import { uid, weightsFromImp, redactMoney, PLAN_L, type Model } from "@/lib/engine";
+import { uid, weightsFromImp, redactMoney, PLAN_L, TIPO_L, type Model } from "@/lib/engine";
+import { relevantCtx, ctxForAi, CTX_ONE } from "@/lib/context";
 
 const TI: Record<string, React.ReactNode> = { briefcase: <Briefcase size={20} />, home: <Home size={20} />, car: <Car size={20} />, rocket: <Rocket size={20} />, package: <Package size={20} />, users: <Users size={20} />, graduation: <GraduationCap size={20} />, piggy: <PiggyBank size={20} /> };
 const REL = { F: ["ok", "verificato"], D: ["info", "dichiarato"], S: ["warn", "stima"], "?": ["bad", "da chiarire"] } as const;
-const TIPO: Record<string, string> = { lavoro: "Lavoro", casa: "Casa", acquisto: "Acquisto", soldi: "Soldi", progetto: "Progetto", relazioni: "Relazioni", famiglia: "Famiglia", salute: "Salute", studio: "Studio", morale: "Scelta morale", fornitore: "Fornitore", persona: "Assunzione", auto: "Auto o mezzo", altro: "Altro" };
+const TIPO = TIPO_L;
 
 type Draft = { name: string; model: Model; questions: string[]; serve: boolean };
 
 export default function Nuova() {
   const r = useRouter();
-  const { createDecision, profile } = useWs();
+  const { createDecision, profile, vault } = useWs();
+  const [cxOff, setCxOff] = useState<string[]>([]);
   const [t, setT] = useState("");
   const [ans, setAns] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [e, setE] = useState("");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [eco, setEco] = useState(profile.ai_share.economia);
+  const rel = t.trim().length >= 20 ? relevantCtx(vault, { name: "", descr: t }, 15) : [];
   const answers = () => (draft?.questions ?? []).map((q, i) => (ans[i]?.trim() ? `${q} ${ans[i].trim()}` : "")).filter(Boolean);
 
   async function struttura() {
@@ -36,7 +39,8 @@ export default function Nuova() {
       const ctx = profile.ai_share.contesto ? Object.entries(profile.context).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("; ") : undefined;
       const rr = answers();
       const tx = (v: string) => (eco ? v : redactMoney(v));
-      const x = await ai<AiStruct>("struttura", { t: tx(t), pr: profile.priorities, ...(rr.length ? { r: rr.map(tx) } : {}), ...(ctx ? { ctx: tx(ctx) } : {}), ...(eco ? { eco: true } : {}) });
+      const cx = ctxForAi(relevantCtx(vault, { name: "", descr: t }, 15, cxOff), eco);
+      const x = await ai<AiStruct>("struttura", { t: tx(t), pr: profile.priorities, ...(rr.length ? { r: rr.map(tx) } : {}), ...(ctx ? { ctx: tx(ctx) } : {}), ...(cx.length ? { cx } : {}), ...(eco ? { eco: true } : {}) });
       const d = structToModel(x);
       if (!d.model.options.length && !d.model.criteria.length) { setE("L'Analista non ha prodotto un quadro utilizzabile: riprova, magari aggiungendo qualche dettaglio."); return; }
       setDraft(d); setAns(rr.length ? [] : ans);
@@ -45,7 +49,8 @@ export default function Nuova() {
   async function crea(model?: Model, name?: string, descr?: string) {
     setBusy(true);
     const rr = answers();
-    const id = await createDecision({ name: name ?? "Nuova decisione", descr: descr ?? t + (rr.length ? `\n\n${rr.join("\n")}` : ""), model });
+    const mm = model ? { ...model, ...(cxOff.length ? { cxOff } : {}) } : cxOff.length ? { criteria: [], constraints: [], options: [], assumptions: [], cxOff } : undefined;
+    const id = await createDecision({ name: name ?? "Nuova decisione", descr: descr ?? t + (rr.length ? `\n\n${rr.join("\n")}` : ""), model: mm });
     setBusy(false);
     if (id) r.push(`/app/decisioni/${id}`);
   }
@@ -77,10 +82,19 @@ export default function Nuova() {
             <button className="btn" disabled={busy} onClick={() => crea()}><FilePlus size={16} /> Crea vuota</button>
             <button className="btn ghost" disabled={busy} onClick={demo}><Wand2 size={16} /> Vedi un esempio compilato</button>
           </div>
+          {rel.length > 0 && (
+            <div className="note cxu">
+              <b>Dal tuo contesto ho già {rel.length} {rel.length === 1 ? "elemento pertinente" : "elementi pertinenti"}</b> e li userò in questa decisione:
+              <ul className="clean" style={{ marginTop: 4 }}>{rel.map((x) => (
+                <li key={x.id}><label className="row" style={{ gap: 6, alignItems: "flex-start", flexWrap: "nowrap" }}>
+                  <input type="checkbox" style={{ width: "auto", marginTop: 3 }} checked={!cxOff.includes(x.id)} onChange={(e) => setCxOff((o) => (e.target.checked ? o.filter((y) => y !== x.id) : [...o, x.id]))} />
+                  <span>{x.t} <small className="muted">· {CTX_ONE[x.k]}{x.priv || x.sens ? " · privato, non va all'AI" : ""}</small></span></label></li>))}</ul>
+            </div>
+          )}
           {busy && <small>L&apos;Analista sta preparando il quadro…</small>}
           {e && <div className="err">{e}</div>}
           <label className="row" style={{ gap: 8, fontSize: 14 }}><input type="checkbox" checked={eco} onChange={(e) => setEco(e.target.checked)} /> Includi le cifre in € (stipendio, affitto…) in questa richiesta</label>
-          <small>L&apos;Analista non ti dice cosa scegliere: ti propone cosa guardare. All&apos;AI vanno il testo e le tue priorità generali{profile.ai_share.contesto ? ", più il tuo contesto" : ""}. {eco ? "Le cifre in € vengono inviate." : "Le cifre in € vengono oscurate prima dell'invio: gli importi li inserisci tu dopo."}</small>
+          <small>L&apos;Analista non ti dice cosa scegliere: ti propone cosa guardare. All&apos;AI vanno il testo e le tue priorità generali{profile.ai_share.contesto ? ", più il tuo contesto" : ""}. {eco ? "Le cifre in € vengono inviate." : "Gli importi vengono oscurati prima dell'invio (in cifre e nelle forme comuni in lettere, come «quarantamila euro»): li inserisci tu dopo."}</small>
         </div>
 
         <div className="card stack">

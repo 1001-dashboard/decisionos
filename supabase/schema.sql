@@ -10,6 +10,7 @@ create table if not exists public.profiles (
   context jsonb not null default '{}',          -- economia, lavoro, famiglia, tempo, residenza, progetti
   ai_share jsonb not null default '{"economia":false,"contesto":false}',
   horizon int not null default 24,
+  vault jsonb not null default '[]',            -- contesto personale confermato (lib/context.ts)
   updated_at timestamptz not null default now()
 );
 
@@ -58,6 +59,8 @@ create table if not exists public.outcomes (
   observed text,
   cause text check (cause in ('ragionamento','dato','imprevisto','nessuno')),
   snapshot_id uuid references public.snapshots on delete set null,
+  pred jsonb,
+  act jsonb,
   created_at timestamptz not null default now()
 );
 
@@ -101,3 +104,6 @@ create policy own on public.ai_usage for all using (user_id = auth.uid()) with c
 
 -- v2.8: identità della strada scelta (l'id, non il nome). Idempotente: si può rilanciare.
 alter table public.outcomes add column if not exists chosen_id text;
+alter table public.outcomes add column if not exists pred jsonb;
+alter table public.outcomes add column if not exists act jsonb;
+alter table public.profiles add column if not exists vault jsonb not null default '[]';

@@ -176,7 +176,7 @@ export default function Landing() {
           <div className="grid g4">
             {[
               ["Privati per default", "Accesso con autenticazione, ogni riga visibile solo a te.", <Lock key="1" />],
-              ["Controllo sull'AI", "Scegli tu cosa inviare al modello: le cifre economiche restano fuori finché non le abiliti.", <EyeOff key="2" />],
+              ["Controllo sull'AI", "Scegli tu cosa inviare al modello: finché non abiliti le cifre economiche, gli importi vengono oscurati prima dell'invio, nell'app e di nuovo sul server.", <EyeOff key="2" />],
               ["Esporta e cancella", "Scarichi tutto in un file, cancelli tutto con un clic.", <Download key="3" />],
               ["Nessun collegamento automatico", "Niente accesso a conti, email o calendari.", <Ban key="4" />],
             ].map(([t, d, ic]) => (
